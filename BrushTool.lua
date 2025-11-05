@@ -23,6 +23,7 @@ local HttpService = game:GetService("HttpService")
 local ASSET_FOLDER_NAME = "BrushToolAssets"
 local WORKSPACE_FOLDER_NAME = "BrushToolCreations"
 local SETTINGS_KEY = "BrushToolAssetOffsets_v2"
+local PRESETS_KEY = "BrushToolPresets_v1"
 
 -- Ensure assets folder exists
 local assetsFolder = ServerStorage:FindFirstChild(ASSET_FOLDER_NAME)
@@ -34,6 +35,8 @@ end
 
 -- State Variables
 local assetOffsets = {}
+local presets = {}
+local selectedPreset = nil
 local currentMode = "Paint" -- "Paint" or "Erase"
 local active = false
 local mouse = nil
@@ -44,6 +47,9 @@ local lastPaintPosition = nil
 local eraseFilter = {} -- Set of asset names to filter for when erasing
 local avoidOverlap = false
 local previewFolder = nil
+local surfaceAngleMode = "Off" -- "Off", "Floor", "Wall"
+
+local updatePresetListUI -- Forward-declare
 
 -- UI Creation
 local toolbar = plugin:CreateToolbar("Brush Tool")
@@ -51,16 +57,16 @@ local toolbarBtn = toolbar:CreateButton("Brush", "Toggle Brush Mode (toolbar)", 
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
 	Enum.InitialDockState.Float,
-	true,   -- Enabled
-	false,  -- Floating
-	380,    -- Width
-	550,    -- Height
-	300,    -- MinWidth
-	200     -- MinHeight
+	false,	-- Enabled
+	false,	-- Floating
+	380,	-- Width
+	550,	-- Height
+	300,	-- MinWidth
+	200		-- MinHeight
 )
 local widget = plugin:CreateDockWidgetPluginGui("BrushToolWidget", widgetInfo)
 widget.Title = "Brush Tool"
-widget.Enabled = true -- show UI on load
+widget.Enabled = false -- show UI on load
 
 -- Build UI inside widget
 local ui = Instance.new("Frame")
@@ -165,16 +171,73 @@ avoidOverlapBtn.Font = Enum.Font.SourceSans
 avoidOverlapBtn.TextSize = 14
 avoidOverlapBtn.Parent = ui
 
+makeLabel("Kunci Permukaan:", 282 + 32)
+local surfaceAngleBtn = Instance.new("TextButton")
+surfaceAngleBtn.Size = UDim2.new(0, 180, 0, 28)
+surfaceAngleBtn.Position = UDim2.new(0, 180, 0, 282 + 32)
+surfaceAngleBtn.Font = Enum.Font.SourceSans
+surfaceAngleBtn.TextSize = 14
+surfaceAngleBtn.Text = "Kunci Permukaan: Mati" -- Teks default
+surfaceAngleBtn.Parent = ui
+
 local assetsLabel = makeLabel("Per-Asset Settings:", 318)
 assetsLabel.Size = UDim2.new(1, -16, 0, 22)
 
 local assetListFrame = Instance.new("ScrollingFrame")
-assetListFrame.Size = UDim2.new(1, -16, 1, -346)
+assetListFrame.Size = UDim2.new(1, -16, 1, -(346 + 150)) -- Adjust for preset frame
 assetListFrame.Position = UDim2.new(0, 8, 0, 342)
 assetListFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 assetListFrame.BorderSizePixel = 1
 assetListFrame.ScrollBarThickness = 6
 assetListFrame.Parent = ui
+
+-- Presets UI
+local presetFrame = Instance.new("Frame")
+presetFrame.Size = UDim2.new(1, 0, 0, 150)
+presetFrame.Position = UDim2.new(0, 0, 1, -150)
+presetFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+presetFrame.BorderSizePixel = 0
+presetFrame.Parent = ui
+
+local presetLabel = makeLabel("Preset Kuas:", 0)
+presetLabel.Parent = presetFrame
+presetLabel.Position = UDim2.new(0, 8, 0, 5)
+
+local presetList = Instance.new("ScrollingFrame")
+presetList.Size = UDim2.new(1, -130, 1, -35)
+presetList.Position = UDim2.new(0, 5, 0, 30)
+presetList.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+presetList.Parent = presetFrame
+
+local presetListLayout = Instance.new("UIListLayout")
+presetListLayout.Padding = UDim.new(0, 2)
+presetListLayout.SortOrder = Enum.SortOrder.Name
+presetListLayout.Parent = presetList
+
+local presetNameBox = makeTextBox("Nama Preset", 0, 0, 120)
+presetNameBox.Position = UDim2.new(1, -125, 0, 30)
+presetNameBox.Parent = presetFrame
+
+local savePresetBtn = Instance.new("TextButton")
+savePresetBtn.Size = UDim2.new(0, 120, 0, 28)
+savePresetBtn.Position = UDim2.new(1, -125, 0, 60)
+savePresetBtn.Text = "Simpan"
+savePresetBtn.Font = Enum.Font.SourceSans; savePresetBtn.TextSize = 14
+savePresetBtn.Parent = presetFrame
+
+local loadPresetBtn = Instance.new("TextButton")
+loadPresetBtn.Size = UDim2.new(0, 58, 0, 28)
+loadPresetBtn.Position = UDim2.new(1, -125, 0, 90)
+loadPresetBtn.Text = "Muat"
+loadPresetBtn.Font = Enum.Font.SourceSans; loadPresetBtn.TextSize = 14
+loadPresetBtn.Parent = presetFrame
+
+local deletePresetBtn = Instance.new("TextButton")
+deletePresetBtn.Size = UDim2.new(0, 58, 0, 28)
+deletePresetBtn.Position = UDim2.new(1, -65, 0, 90)
+deletePresetBtn.Text = "Hapus"
+deletePresetBtn.Font = Enum.Font.SourceSans; deletePresetBtn.TextSize = 14
+deletePresetBtn.Parent = presetFrame
 
 local listLayout = Instance.new("UIListLayout")
 listLayout.Padding = UDim.new(0, 4)
@@ -184,6 +247,54 @@ listLayout.Parent = assetListFrame
 -- Utility Functions
 local function trim(s)
 	return s:match("^%s*(.-)%s*$") or s
+end
+
+local function savePresets()
+	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, presets)
+	if ok then
+		plugin:SetSetting(PRESETS_KEY, jsonString)
+	else
+		warn("Brush Tool: Gagal menyimpan preset! Error:", jsonString)
+	end
+end
+
+local function loadPresets()
+	local jsonString = plugin:GetSetting(PRESETS_KEY)
+	if jsonString and #jsonString > 0 then
+		local ok, data = pcall(HttpService.JSONDecode, HttpService, jsonString)
+		if ok and type(data) == "table" then
+			presets = data
+		else
+			presets = {}
+		end
+	else
+		presets = {}
+	end
+end
+
+local function persistOffsets()
+	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, assetOffsets)
+	if ok then
+		plugin:SetSetting(SETTINGS_KEY, jsonString)
+	else
+		warn("Brush Tool: Gagal menyimpan offset aset! Error:", jsonString)
+	end
+end
+
+
+
+local function deletePreset(name)
+	if not name or not presets[name] then return end
+
+	presets[name] = nil
+	savePresets()
+
+	if selectedPreset == name then
+		selectedPreset = nil
+		presetNameBox.Text = "Nama Preset"
+	end
+
+	updatePresetListUI()
 end
 
 local function parseNumber(txt, fallback)
@@ -196,13 +307,36 @@ local function parseNumber(txt, fallback)
 	return fallback
 end
 
-local function persistOffsets()
-	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, assetOffsets)
-	if ok then
-		plugin:SetSetting(SETTINGS_KEY, jsonString)
-	else
-		warn("Brush Tool: Gagal menyimpan offset aset! Error:", jsonString)
+
+local function savePreset(name)
+	if not name or name == "" or name == "Nama Preset" then
+		warn("Brush Tool: Nama preset tidak valid.")
+		return
 	end
+
+	local assetStates = {}
+	for _, asset in ipairs(assetsFolder:GetChildren()) do
+		local isActive = assetOffsets[asset.Name .. "_active"]
+		if isActive == nil then isActive = true end
+		assetStates[asset.Name] = isActive
+	end
+
+	presets[name] = {
+		radius = parseNumber(radiusBox.Text, 10),
+		density = parseNumber(densityBox.Text, 10),
+		scaleMin = parseNumber(scaleMinBox.Text, 0.8),
+		scaleMax = parseNumber(scaleMaxBox.Text, 1.3),
+		spacing = parseNumber(spacingBox.Text, 1.5),
+		rotXMin = parseNumber(rotXMinBox.Text, 0),
+		rotXMax = parseNumber(rotXMaxBox.Text, 0),
+		rotZMin = parseNumber(rotZMinBox.Text, 0),
+		rotZMax = parseNumber(rotZMaxBox.Text, 0),
+		avoidOverlap = avoidOverlap,
+		surfaceAngleMode = surfaceAngleMode,
+		assetStates = assetStates,
+	}
+	savePresets()
+	updatePresetListUI()
 end
 
 local function loadOffsets()
@@ -314,6 +448,33 @@ local function updateAssetUIList()
 		border.Thickness = 0
 		border.Parent = row
 
+		-- ================= PERBAIKAN 1: Mulai =================
+		-- Click detector for the entire row for erase filtering
+		-- Ini harus dibuat SEBELUM tombol/textbox lain agar berada di lapisan bawah
+		local rowButton = Instance.new("TextButton")
+		rowButton.Size = UDim2.new(1, 0, 1, 0)
+		rowButton.Text = ""
+		rowButton.BackgroundTransparency = 1
+		rowButton.ZIndex = 0 -- Pastikan di lapisan bawah
+		rowButton.Parent = row
+
+		local function updateEraseFilterAppearance()
+			if eraseFilter[assetName] then
+				border.Thickness = 2
+			else
+				border.Thickness = 0
+			end
+		end
+		-- updateEraseFilterAppearance() -- Hapus dari sini, panggil di akhir loop
+
+		rowButton.MouseButton1Click:Connect(function()
+			if currentMode == "Erase" then
+				eraseFilter[assetName] = not eraseFilter[assetName]
+				updateEraseFilterAppearance()
+			end
+		end)
+		-- ================= PERBAIKAN 1: Selesai =================
+
 		-- Viewport Frame for visual preview
 		local viewport = Instance.new("ViewportFrame")
 		viewport.Size = UDim2.new(0, 64, 0, 64)
@@ -415,29 +576,44 @@ local function updateAssetUIList()
 			persistOffsets()
 		end)
 
-		-- Click detector for the entire row for erase filtering
-		local rowButton = Instance.new("TextButton")
-		rowButton.Size = UDim2.new(1, 0, 1, 0)
-		rowButton.Text = ""
-		rowButton.BackgroundTransparency = 1
-		rowButton.Parent = row
-
-		local function updateEraseFilterAppearance()
-			if eraseFilter[assetName] then
-				border.Thickness = 2
-			else
-				border.Thickness = 0
-			end
-		end
+		-- Panggil ini di akhir loop
 		updateEraseFilterAppearance()
-
-		rowButton.MouseButton1Click:Connect(function()
-			if currentMode == "Erase" then
-				eraseFilter[assetName] = not eraseFilter[assetName]
-				updateEraseFilterAppearance()
-			end
-		end)
 	end
+end
+
+local function loadPreset(name)
+	local data = presets[name]
+	if not data then return end
+
+	radiusBox.Text = tostring(data.radius)
+	densityBox.Text = tostring(data.density)
+	scaleMinBox.Text = tostring(data.scaleMin)
+	scaleMaxBox.Text = tostring(data.scaleMax)
+	spacingBox.Text = tostring(data.spacing)
+	rotXMinBox.Text = tostring(data.rotXMin)
+	rotXMaxBox.Text = tostring(data.rotXMax)
+	rotZMinBox.Text = tostring(data.rotZMin)
+	rotZMaxBox.Text = tostring(data.rotZMax)
+	avoidOverlap = data.avoidOverlap
+	avoidOverlapBtn.Text = avoidOverlap and "Ya" or "Tidak"
+
+	surfaceAngleMode = data.surfaceAngleMode or "Off"
+	if surfaceAngleMode == "Off" then
+		surfaceAngleBtn.Text = "Kunci Permukaan: Mati"
+	elseif surfaceAngleMode == "Floor" then
+		surfaceAngleBtn.Text = "Kunci Permukaan: Lantai"
+	else
+		surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
+	end
+
+	if data.assetStates then
+		for assetName, isActive in pairs(data.assetStates) do
+			assetOffsets[assetName .. "_active"] = isActive
+		end
+	end
+
+	updateAssetUIList()
+	persistOffsets()
 end
 
 -- Core Logic Functions
@@ -900,7 +1076,7 @@ end
 -- Connect Global Button Events
 toolbarBtn.Click:Connect(toggle)
 brushToggleBtn.MouseButton1Click:Connect(toggle)
-widget.Enabled = true
+widget.Enabled = false
 
 plugin.Unloading:Connect(function()
 	if previewFolder and previewFolder.Parent then
@@ -920,11 +1096,81 @@ modeToggleBtn.MouseButton1Click:Connect(function()
 		updateAssetUIList()
 	end
 	updatePreview() -- Update preview color
+
+	-- ================= PERBAIKAN 2: Mulai =================
+	-- Event listener 'surfaceAngleBtn' dipindahkan ke luar dari fungsi ini
+	-- ================= PERBAIKAN 2: Selesai ================
 end)
+
+function updatePresetListUI()
+	for _, v in ipairs(presetList:GetChildren()) do
+		if v:IsA("GuiObject") and not v:IsA("UIListLayout") then v:Destroy() end
+	end
+
+	local presetNames = {}
+	for name, _ in pairs(presets) do
+		table.insert(presetNames, name)
+	end
+	table.sort(presetNames)
+
+	for _, name in ipairs(presetNames) do
+		local btn = Instance.new("TextButton")
+		btn.Name = name
+		btn.Text = name
+		btn.Size = UDim2.new(1, 0, 0, 24)
+		btn.TextXAlignment = Enum.TextXAlignment.Left
+		btn.Font = Enum.Font.SourceSans; btn.TextSize = 14
+		btn.Parent = presetList
+
+		if name == selectedPreset then
+			btn.BackgroundColor3 = Color3.fromRGB(80, 180, 255)
+		end
+
+		btn.MouseButton1Click:Connect(function()
+			selectedPreset = name
+			presetNameBox.Text = name
+			updatePresetListUI()
+		end)
+	end
+end
 
 -- Initial Load and Print
 loadOffsets()
+loadPresets()
 updateAssetUIList()
+updatePresetListUI()
+
+-- Final UI Connections
+savePresetBtn.MouseButton1Click:Connect(function()
+	savePreset(presetNameBox.Text)
+end)
+
+loadPresetBtn.MouseButton1Click:Connect(function()
+	if selectedPreset then
+		loadPreset(selectedPreset)
+	end
+end)
+
+deletePresetBtn.MouseButton1Click:Connect(function()
+	if selectedPreset then
+		deletePreset(selectedPreset)
+	end
+end)
+
+-- ================= PERBAIKAN 2: Ditempel di sini =================
+surfaceAngleBtn.MouseButton1Click:Connect(function()
+	if surfaceAngleMode == "Off" then
+		surfaceAngleMode = "Floor"
+		surfaceAngleBtn.Text = "Kunci Permukaan: Lantai"
+	elseif surfaceAngleMode == "Floor" then
+		surfaceAngleMode = "Wall"
+		surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
+	else -- Pasti "Wall"
+		surfaceAngleMode = "Off"
+		surfaceAngleBtn.Text = "Kunci Permukaan: Mati"
+	end
+end)
+-- =================================================================
 
 -- Initialize Preview Folder at a global scope
 previewFolder = workspace:FindFirstChild("_BrushPreview")
