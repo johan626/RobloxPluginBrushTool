@@ -61,6 +61,8 @@ local eraseFilter = {} -- Set of asset names to filter for when erasing
 local avoidOverlap = false
 local previewFolder = nil
 local surfaceAngleMode = "Off" -- "Off", "Floor", "Wall"
+local snapToGridEnabled = false
+local gridSize = 4
 
 local updatePresetListUI -- Forward-declare
 local updatePaletteListUI -- Forward-declare
@@ -252,7 +254,7 @@ ui.Parent = widget
 -- Redclare variables for controls that will be created in the new UI
 local radiusBox, densityBox, scaleMinBox, scaleMaxBox, spacingBox, rotXMinBox, rotXMaxBox, rotZMinBox, rotZMaxBox
 local randomizeBtn, addBtn, clearBtn, fillBtn
-local avoidOverlapBtn, surfaceAngleBtn, physicsModeBtn, physicsSettleTimeBox
+local avoidOverlapBtn, surfaceAngleBtn, physicsModeBtn, physicsSettleTimeBox, snapToGridBtn, gridSizeBox
 local assetListFrame, paletteNameBox, savePaletteBtn, loadPaletteBtn, deletePaletteBtn
 local presetNameBox, savePresetBtn, loadPresetBtn, deletePresetBtn, paletteList, presetList
 
@@ -710,6 +712,33 @@ physicsSettleTimeBox = createStyledTextBox(physicsSettleTime, physicsSettleTimeR
 physicsSettleTimeBox.Size = UDim2.new(1, 0, 0, 28)
 physicsSettleTimeBox.LayoutOrder = 2
 
+local snapToGridContainer = Instance.new("Frame")
+snapToGridContainer.BackgroundTransparency = 1
+snapToGridContainer.Parent = advancedSettingsContent
+snapToGridBtn, _ = createToggleRow(snapToGridContainer, "Tempel ke Grid")
+
+local gridSizeContainer = Instance.new("Frame")
+gridSizeContainer.BackgroundTransparency = 1
+gridSizeContainer.Parent = advancedSettingsContent
+
+local gridSizeRow = Instance.new("Frame")
+gridSizeRow.Size = UDim2.new(1, 0, 0, 28)
+gridSizeRow.BackgroundTransparency = 1
+gridSizeRow.Parent = gridSizeContainer
+local gridLayout = Instance.new("UIListLayout")
+gridLayout.FillDirection = Enum.FillDirection.Vertical
+gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+gridLayout.Padding = UDim.new(0, 2)
+gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+gridLayout.Parent = gridSizeRow
+local gridLabel = createStyledLabel("Ukuran Grid", gridSizeRow)
+gridLabel.Size = UDim2.new(1, 0, 0, 18)
+gridLabel.TextXAlignment = Enum.TextXAlignment.Center
+gridLabel.LayoutOrder = 1
+gridSizeBox = createStyledTextBox(gridSize, gridSizeRow)
+gridSizeBox.Size = UDim2.new(1, 0, 0, 28)
+gridSizeBox.LayoutOrder = 2
+
 assetListFrame.LayoutOrder = 3
 assetActionBar.LayoutOrder = 4
 
@@ -756,13 +785,23 @@ local function updateToggleButtonsUI()
 		physicsModeBtn.Text = "Mati"
 		physicsModeBtn.BackgroundColor3 = Theme.Red
 	end
+
+	-- Snap to Grid
+	snapToGridBtn.Text = snapToGridEnabled and "Ya" or "Tidak"
+	snapToGridBtn.BackgroundColor3 = snapToGridEnabled and Theme.Green or Theme.Red
 end
 
 local function trim(s)
 	return s:match("^%s*(.-)%s*$") or s
 end
 
-
+local function snapPositionToGrid(position, size)
+	if size <= 0 then return position end
+	local x = math.floor(position.X / size + 0.5) * size
+	local y = math.floor(position.Y / size + 0.5) * size
+	local z = math.floor(position.Z / size + 0.5) * size
+	return Vector3.new(x, y, z)
+end
 
 local function savePresets()
 	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, presets)
@@ -913,6 +952,8 @@ local function savePreset(name)
 		rotZMax = parseNumber(rotZMaxBox.Text, 0),
 		avoidOverlap = avoidOverlap,
 		surfaceAngleMode = surfaceAngleMode,
+		snapToGridEnabled = snapToGridEnabled,
+		gridSize = parseNumber(gridSizeBox.Text, 4),
 		assetStates = assetStates,
 	}
 	savePresets()
@@ -1204,6 +1245,11 @@ local function loadPreset(name)
 		surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
 	end
 
+	snapToGridEnabled = data.snapToGridEnabled or false
+	gridSize = data.gridSize or 4
+	gridSizeBox.Text = tostring(gridSize)
+	updateToggleButtonsUI()
+
 	if data.assetStates then
 		for assetName, state in pairs(data.assetStates) do
 			if type(state) == "table" then
@@ -1394,6 +1440,10 @@ placeAsset = function(assetToClone, position, normal)
 			finalPosition = clone:GetPrimaryPartCFrame().Position + (effectiveNormal * customOffset) -- Fallback
 		end
 
+		if snapToGridEnabled then
+			finalPosition = snapPositionToGrid(finalPosition, gridSize)
+		end
+
 		local finalCFrame
 		local forceAlign = (surfaceAngleMode == "Wall") -- Selalu selaraskan dalam mode Dinding
 		-- Selaraskan jika dipaksa (Dinding) ATAU (jika diaktifkan (Selaras: Ya) DAN mode Mati)
@@ -1419,6 +1469,9 @@ placeAsset = function(assetToClone, position, normal)
 		local finalYOffset = (clone.Size.Y / 2) + customOffset
 		-- Gunakan effectiveNormal untuk perhitungan offset
 		local finalPos = position + (effectiveNormal * finalYOffset)
+		if snapToGridEnabled then
+			finalPos = snapPositionToGrid(finalPos, gridSize)
+		end
 		local finalCFrame
 		local forceAlign = (surfaceAngleMode == "Wall") -- Selalu selaraskan dalam mode Dinding
 		if (forceAlign or (shouldAlign and surfaceAngleMode == "Off")) and normal then
@@ -2409,6 +2462,19 @@ physicsSettleTimeBox.FocusLost:Connect(function(enterPressed)
 	physicsSettleTime = newValue
 	physicsSettleTimeBox.Text = tostring(newValue)
 end)
+
+snapToGridBtn.MouseButton1Click:Connect(function()
+	snapToGridEnabled = not snapToGridEnabled
+	updateToggleButtonsUI()
+end)
+
+gridSizeBox.FocusLost:Connect(function(enterPressed)
+	local newValue = parseNumber(gridSizeBox.Text, 4)
+	if newValue <= 0 then newValue = 1 end -- Ukuran minimal
+	gridSize = newValue
+	gridSizeBox.Text = tostring(newValue)
+end)
+
 
 -- Initialize Preview Folder at a global scope
 previewFolder = workspace:FindFirstChild("_BrushPreview")
