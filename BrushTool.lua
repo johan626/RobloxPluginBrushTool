@@ -59,6 +59,7 @@ local physicsModeEnabled = false
 local physicsSettleTime = 1.5
 local targetAsset = nil -- For Replace tool
 local eraseFilter = {} -- Set of asset names to filter for when erasing
+local selectedAssetInUI = nil
 local avoidOverlap = false
 local previewFolder = nil
 local densityPreviewFolder = nil
@@ -561,16 +562,113 @@ C.clearBtn = createStyledButton("Clear Asset List", C.assetActionBar)
 
 -- Asset List Frame (akan diisi oleh updateAssetUIList)
 local assetListFrame = Instance.new("ScrollingFrame")
-assetListFrame.Size = UDim2.new(1, 0, 0, 300) -- Ukuran awal, akan disesuaikan
+assetListFrame.Size = UDim2.new(1, 0, 0, 300)
 assetListFrame.BackgroundColor3 = Theme.Section
 assetListFrame.BorderSizePixel = 0
 assetListFrame.ScrollBarThickness = 6
 assetListFrame.Parent = mainScrollFrame
-local listLayout = Instance.new("UIListLayout")
-listLayout.Padding = UDim.new(0, 4)
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Parent = assetListFrame
+local gridLayout = Instance.new("UIGridLayout")
+gridLayout.CellPadding = UDim2.new(0, 8, 0, 8)
+gridLayout.CellSize = UDim2.new(0.5, -4, 0, 180)
+gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+gridLayout.Parent = assetListFrame
 C.assetListFrame = assetListFrame
+
+-- Panel Pengaturan Aset (muncul saat item grid dipilih)
+local assetSettingsContent, assetSettingsSection = createSection("Pengaturan Aset Terpilih", mainScrollFrame)
+assetSettingsSection.Visible = false -- Sembunyikan seluruh section secara default
+C.assetSettingsPanel = assetSettingsSection -- Store the whole section
+C.assetSettingsContent = assetSettingsContent -- Store the content frame
+
+C.assetSettingsName = createStyledLabel("Pilih sebuah aset...", assetSettingsContent)
+C.assetSettingsName.TextXAlignment = Enum.TextXAlignment.Center
+C.assetSettingsName.Size = UDim2.new(1, 0, 0, 20)
+C.assetSettingsName.Font = Enum.Font.SourceSansBold
+
+local settingsControlsFrame = Instance.new("Frame")
+settingsControlsFrame.AutomaticSize = Enum.AutomaticSize.Y
+settingsControlsFrame.Size = UDim2.new(1, 0, 0, 60)
+settingsControlsFrame.BackgroundTransparency = 1
+settingsControlsFrame.Parent = assetSettingsContent
+local settingsControlsLayout = Instance.new("UIGridLayout")
+settingsControlsLayout.CellSize = UDim2.new(0.5, -4, 0, 28)
+settingsControlsLayout.CellPadding = UDim2.new(0, 8, 0, 4)
+settingsControlsLayout.FillDirection = Enum.FillDirection.Horizontal
+settingsControlsLayout.Parent = settingsControlsFrame
+
+local function createSettingsControlRow(parent, labelText)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 1, 0)
+	row.BackgroundTransparency = 1
+	row.Parent = parent
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = row
+	local label = createStyledLabel(labelText, row)
+	label.Size = UDim2.new(0.4, 0, 1, 0)
+	return row, label
+end
+
+local offsetRow, _ = createSettingsControlRow(settingsControlsFrame, "Y-Off:")
+C.assetSettingsOffsetY = createStyledTextBox("0", offsetRow)
+C.assetSettingsOffsetY.Size = UDim2.new(0.6, 0, 1, 0)
+
+local weightRow, _ = createSettingsControlRow(settingsControlsFrame, "Bobot:")
+C.assetSettingsWeight = createStyledTextBox("1", weightRow)
+C.assetSettingsWeight.Size = UDim2.new(0.6, 0, 1, 0)
+
+local alignRow, _ = createSettingsControlRow(settingsControlsFrame, "Selaras:")
+C.assetSettingsAlign = createStyledButton("Ya", alignRow)
+C.assetSettingsAlign.Size = UDim2.new(0.6, 0, 1, 0)
+
+local activeRow, _ = createSettingsControlRow(settingsControlsFrame, "Aktif:")
+C.assetSettingsActive = createStyledButton("✓", activeRow)
+C.assetSettingsActive.Size = UDim2.new(0.6, 0, 1, 0)
+
+local function persistOffsets()
+	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, assetOffsets)
+	if ok then
+		plugin:SetSetting(SETTINGS_KEY, jsonString)
+	else
+		warn("Brush Tool: Gagal menyimpan offset aset! Error:", jsonString)
+	end
+end
+
+C.assetSettingsOffsetY.FocusLost:Connect(function(enterPressed)
+	if not selectedAssetInUI then return end
+	local v = parseNumber(C.assetSettingsOffsetY.Text, 0)
+	assetOffsets[selectedAssetInUI] = v
+	C.assetSettingsOffsetY.Text = tostring(v)
+	persistOffsets()
+end)
+
+C.assetSettingsWeight.FocusLost:Connect(function(enterPressed)
+	if not selectedAssetInUI then return end
+	local v = math.max(0, parseNumber(C.assetSettingsWeight.Text, 1))
+	assetOffsets[selectedAssetInUI .. "_weight"] = v
+	C.assetSettingsWeight.Text = tostring(v)
+	persistOffsets()
+end)
+
+C.assetSettingsAlign.MouseButton1Click:Connect(function()
+	if not selectedAssetInUI then return end
+	local key = selectedAssetInUI .. "_align"
+	assetOffsets[key] = not (assetOffsets[key] or false)
+	persistOffsets()
+	updateAssetSettingsPanel()
+end)
+
+C.assetSettingsActive.MouseButton1Click:Connect(function()
+	if not selectedAssetInUI then return end
+	local key = selectedAssetInUI .. "_active"
+	local current = assetOffsets[key] == nil or assetOffsets[key]
+	assetOffsets[key] = not current
+	persistOffsets()
+	updateAssetSettingsPanel()
+end)
 
 -- Palettes & Presets Section
 local palettesPresetsContent, palettesPresetsSection = createSection("Palet & Preset", mainScrollFrame)
@@ -799,7 +897,8 @@ C.gridSizeBox.Size = UDim2.new(1, 0, 0, 28)
 C.gridSizeBox.LayoutOrder = 2
 
 C.assetListFrame.LayoutOrder = 3
-C.assetActionBar.LayoutOrder = 4
+C.assetSettingsPanel.LayoutOrder = 4
+C.assetActionBar.LayoutOrder = 5
 
 -- Utility Functions
 local function updateModeButtonsUI()
@@ -967,14 +1066,7 @@ local function loadPresets()
 	end
 end
 
-local function persistOffsets()
-	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, assetOffsets)
-	if ok then
-		plugin:SetSetting(SETTINGS_KEY, jsonString)
-	else
-		warn("Brush Tool: Gagal menyimpan offset aset! Error:", jsonString)
-	end
-end
+
 
 local function persistPalettes()
 	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, assetPalettes)
@@ -1195,59 +1287,104 @@ local function setupViewport(viewport, asset)
 	camera.CFrame = CFrame.new(center + camOffset, center)
 end
 
+updateAssetSettingsPanel = function()
+	if not selectedAssetInUI then
+		C.assetSettingsPanel.Visible = false
+		return
+	end
+
+	C.assetSettingsPanel.Visible = true
+	if C.assetSettingsPanel:FindFirstChild("Content") then
+		C.assetSettingsPanel:FindFirstChild("Content").Visible = true
+	end
+	C.assetSettingsName.Text = selectedAssetInUI
+
+	local assetName = selectedAssetInUI
+	local offsetKey, alignKey, activeKey, weightKey = assetName, assetName .. "_align", assetName .. "_active", assetName .. "_weight"
+
+	-- Populate controls
+	C.assetSettingsOffsetY.Text = tostring(assetOffsets[offsetKey] or 0)
+	C.assetSettingsWeight.Text = tostring(assetOffsets[weightKey] or 1)
+
+	local isAligning = assetOffsets[alignKey] or false
+	C.assetSettingsAlign.Text = isAligning and "Ya" or "Tidak"
+	C.assetSettingsAlign.BackgroundColor3 = isAligning and Theme.Green or Theme.Red
+
+	local isActive = assetOffsets[activeKey] == nil or assetOffsets[activeKey]
+	C.assetSettingsActive.Text = isActive and "✓" or ""
+	C.assetSettingsActive.BackgroundColor3 = isActive and Theme.Green or Theme.Red
+end
+
 local function updateAssetUIList()
 	C.assetListFrame.CanvasPosition = Vector2.new(0, 0)
 	for _, v in ipairs(C.assetListFrame:GetChildren()) do
-		if v:IsA("GuiObject") and not v:IsA("UIListLayout") then
+		if v:IsA("GuiObject") and not v:IsA("UIGridLayout") then
 			v:Destroy()
 		end
 	end
 
 	local children = assetsFolder:GetChildren()
-	local rowHeight = 70
-	local listLayout = C.assetListFrame:FindFirstChildOfClass("UIListLayout")
-	local canvasHeight = #children * rowHeight + (#children - 1) * listLayout.Padding.Offset
-	C.assetListFrame.CanvasSize = UDim2.new(0, 0, 0, math.max(canvasHeight, 1))
 
 	for i, asset in ipairs(children) do
 		local assetName = asset.Name
-		local offsetKey, alignKey, activeKey, weightKey = assetName, assetName .. "_align", assetName .. "_active", assetName .. "_weight"
 
-		local row = Instance.new("Frame")
-		row.Name = assetName .. "_Row"
-		row.Size = UDim2.new(1, 0, 0, rowHeight)
-		row.BackgroundColor3 = Theme.Background
-		row.LayoutOrder = i
-		row.Parent = C.assetListFrame
-		Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+		-- Main card button
+		local card = Instance.new("TextButton")
+		card.Name = assetName .. "_Card"
+		card.Size = UDim2.new(1, 0, 1, 0) -- Use the size from GridLayout
+		card.BackgroundColor3 = Theme.Background
+		card.Text = ""
+		card.LayoutOrder = i
+		card.Parent = C.assetListFrame
+
+		local corner = Instance.new("UICorner", card)
+		corner.CornerRadius = UDim.new(0, 4)
+
+		local cardLayout = Instance.new("UIListLayout", card)
+		cardLayout.Padding = UDim.new(0, 4)
+		cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		cardLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
 		local border = Instance.new("UIStroke")
 		border.Thickness = 2
-		border.Parent = row
+		border.Color = Theme.Border
+		border.Parent = card
 
-		local rowButton = Instance.new("TextButton")
-		rowButton.Size = UDim2.new(1, 0, 1, 0)
-		rowButton.Text = ""
-		rowButton.BackgroundTransparency = 1
-		rowButton.ZIndex = 0
-		rowButton.Parent = row
+		-- Viewport
+		local viewport = Instance.new("ViewportFrame")
+		viewport.Size = UDim2.new(1, -8, 0, 140)
+		viewport.BackgroundColor3 = Theme.Section
+		viewport.Ambient = Color3.fromRGB(200, 200, 200)
+		viewport.LightColor = Color3.fromRGB(150, 150, 150)
+		viewport.LightDirection = Vector3.new(-1, -2, -0.5)
+		viewport.LayoutOrder = 1
+		viewport.Parent = card
+		Instance.new("UICorner", viewport).CornerRadius = UDim.new(0, 4)
+		task.spawn(setupViewport, viewport, asset)
 
-		local function updateSelectionAppearance()
-			if currentMode == "Erase" and eraseFilter[assetName] then
-				border.Color = Theme.Red
-				border.Enabled = true
-			elseif currentMode == "Replace" and sourceAsset == assetName then
-				border.Color = Theme.Blue
-				border.Enabled = true
-			elseif currentMode == "Replace" and targetAsset == assetName then
-				border.Color = Theme.Green
-				border.Enabled = true
+		-- Name Label
+		local lbl = createStyledLabel(assetName, card)
+		lbl.Size = UDim2.new(1, -8, 0, 16)
+		lbl.TextXAlignment = Enum.TextXAlignment.Center
+		lbl.TextTruncate = Enum.TextTruncate.AtEnd
+		lbl.LayoutOrder = 2
+		lbl.Parent = card
+
+		-- Selection Logic
+		card.MouseButton1Click:Connect(function()
+			if selectedAssetInUI == assetName then
+				-- Deselect if clicking the same asset again
+				selectedAssetInUI = nil
+				C.assetSettingsPanel.Visible = false
 			else
-				border.Enabled = false
+				selectedAssetInUI = assetName
+				updateAssetSettingsPanel() -- Update and show the panel
 			end
-		end
+			updateAssetUIList() -- Redraw to update selection highlights
+		end)
 
-		rowButton.MouseButton1Click:Connect(function()
+		-- Right click for special modes
+		card.MouseButton2Click:Connect(function()
 			if currentMode == "Erase" then
 				eraseFilter[assetName] = not eraseFilter[assetName]
 			elseif currentMode == "Replace" then
@@ -1260,106 +1397,22 @@ local function updateAssetUIList()
 			updateAssetUIList()
 		end)
 
-		local viewport = Instance.new("ViewportFrame")
-		viewport.Size = UDim2.new(0, 64, 0, 64)
-		viewport.Position = UDim2.new(0, 3, 0, 3)
-		viewport.BackgroundColor3 = Theme.Section
-		viewport.Ambient = Color3.fromRGB(200, 200, 200)
-		viewport.LightColor = Color3.fromRGB(150, 150, 150)
-		viewport.LightDirection = Vector3.new(-1, -2, -0.5)
-		viewport.Parent = row
-		Instance.new("UICorner", viewport).CornerRadius = UDim.new(0, 4)
-		task.spawn(setupViewport, viewport, asset)
-
-		local activeButton = Instance.new("TextButton")
-		activeButton.Size = UDim2.new(0, 20, 0, 20)
-		activeButton.Position = UDim2.new(0, 70, 0, 5)
-		activeButton.Font = Enum.Font.SourceSansBold
-		activeButton.Text = ""
-		activeButton.TextColor3 = Theme.Background
-		activeButton.Parent = row
-		Instance.new("UICorner", activeButton).CornerRadius = UDim.new(0, 4)
-
-		local function updateActiveButtonAppearance()
-			local isActive = assetOffsets[activeKey] == nil or assetOffsets[activeKey]
-			if isActive then
-				activeButton.BackgroundColor3 = Theme.Green
-				activeButton.Text = "✓"
-			else
-				activeButton.BackgroundColor3 = Theme.Red
-				activeButton.Text = ""
-			end
+		-- Update appearance based on state
+		if selectedAssetInUI == assetName then
+			border.Color = Theme.Accent
+			border.Enabled = true
+		elseif currentMode == "Erase" and eraseFilter[assetName] then
+			border.Color = Theme.Red
+			border.Enabled = true
+		elseif currentMode == "Replace" and sourceAsset == assetName then
+			border.Color = Theme.Blue
+			border.Enabled = true
+		elseif currentMode == "Replace" and targetAsset == assetName then
+			border.Color = Theme.Green
+			border.Enabled = true
+		else
+			border.Enabled = false
 		end
-		updateActiveButtonAppearance()
-
-		local lbl = createStyledLabel(assetName, row)
-		lbl.Size = UDim2.new(1, -95, 0, 20)
-		lbl.Position = UDim2.new(0, 92, 0, 4)
-
-		local controlsFrame = Instance.new("Frame")
-		controlsFrame.Size = UDim2.new(1, -75, 0, 28)
-		controlsFrame.Position = UDim2.new(0, 70, 0, 32)
-		controlsFrame.BackgroundTransparency = 1
-		controlsFrame.Parent = row
-		local controlsLayout = Instance.new("UIListLayout")
-		controlsLayout.FillDirection = Enum.FillDirection.Horizontal
-		controlsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-		controlsLayout.Padding = UDim.new(0, 4)
-		controlsLayout.Parent = controlsFrame
-
-		local offsetLabel = createStyledLabel("Y-Off:", controlsFrame)
-		offsetLabel.Size = UDim2.new(0, 35, 1, 0)
-		local offsetBox = createStyledTextBox(assetOffsets[offsetKey] or 0, controlsFrame)
-		offsetBox.Size = UDim2.new(0, 40, 1, 0)
-
-		local weightLabel = createStyledLabel("Bobot:", controlsFrame)
-		weightLabel.Size = UDim2.new(0, 35, 1, 0)
-		local weightBox = createStyledTextBox(assetOffsets[weightKey] or 1, controlsFrame)
-		weightBox.Size = UDim2.new(0, 40, 1, 0)
-
-		local alignButton = createStyledButton("", controlsFrame)
-		alignButton.Size = UDim2.new(1, -178, 1, 0)
-
-		local function updateAlignButtonAppearance()
-			local isAligning = assetOffsets[alignKey] or false
-			if isAligning then
-				alignButton.Text = "Selaras: Ya"
-				alignButton.BackgroundColor3 = Theme.Green
-			else
-				alignButton.Text = "Selaras: Tdk"
-				alignButton.BackgroundColor3 = Theme.Red
-			end
-		end
-		updateAlignButtonAppearance()
-
-		activeButton.MouseButton1Click:Connect(function()
-			local current = assetOffsets[activeKey] == nil or assetOffsets[activeKey]
-			assetOffsets[activeKey] = not current
-			persistOffsets()
-			updateActiveButtonAppearance()
-		end)
-
-		offsetBox.FocusLost:Connect(function(enterPressed)
-			local v = parseNumber(offsetBox.Text, 0)
-			assetOffsets[offsetKey] = v
-			offsetBox.Text = tostring(v)
-			persistOffsets()
-		end)
-
-		weightBox.FocusLost:Connect(function(enterPressed)
-			local v = math.max(0, parseNumber(weightBox.Text, 1))
-			assetOffsets[weightKey] = v
-			weightBox.Text = tostring(v)
-			persistOffsets()
-		end)
-
-		alignButton.MouseButton1Click:Connect(function()
-			assetOffsets[alignKey] = not (assetOffsets[alignKey] or false)
-			updateAlignButtonAppearance()
-			persistOffsets()
-		end)
-
-		updateSelectionAppearance()
 	end
 end
 
@@ -2319,7 +2372,7 @@ local function updatePreview()
 end
 
 local function handlePaint(center, normal)
-	if currentMode == "Paint" then
+	if currentMode == "Paint" or currentMode == "Stamp" then
 		paintAt(center, normal)
 	elseif currentMode == "Erase" then
 		eraseAt(center)
@@ -2365,8 +2418,10 @@ local function onDown()
 	elseif currentMode == "Curve" then
 		table.insert(curvePoints, center)
 		updateCurvePreview()
-	else -- Paint or Erase
-		isPainting = true
+	else -- Paint, Erase, Replace, or Stamp
+		if currentMode == "Paint" or currentMode == "Erase" or currentMode == "Replace" then
+			isPainting = true
+		end
 		handlePaint(center, normal)
 	end
 end
@@ -2645,6 +2700,7 @@ local function setMode(newMode)
 
 	-- Update UI
 	updateModeButtonsUI()
+	updateAssetSettingsPanel()
 	updateAssetUIList()
 	updatePreview()
 	updateFillSelection()
