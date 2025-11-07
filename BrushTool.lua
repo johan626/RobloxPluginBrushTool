@@ -18,6 +18,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Selection = game:GetService("Selection")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local HttpService = game:GetService("HttpService")
+local CollectionService = game:GetService("CollectionService")
 
 -- Constants
 local ASSET_FOLDER_NAME = "BrushToolAssets"
@@ -60,14 +61,19 @@ local targetAsset = nil -- For Replace tool
 local eraseFilter = {} -- Set of asset names to filter for when erasing
 local avoidOverlap = false
 local previewFolder = nil
+local densityPreviewFolder = nil
 local surfaceAngleMode = "Off" -- "Off", "Floor", "Wall"
 local snapToGridEnabled = false
 local gridSize = 4
+local densityPreviewEnabled = true
+local maskingMode = "Off" -- Off, Material, Color, Tag
+local maskingValue = nil
 
 local updatePresetListUI -- Forward-declare
 local updatePaletteListUI -- Forward-declare
 local updateAssetUIList -- Forward-declare
 local updateFillSelection -- Forward-declare
+local updateDensityPreview -- Forward-declare
 local clearCurve -- Forward-declare
 local catmullRom -- Forward-declare
 local placeAsset -- Forward-declare
@@ -251,12 +257,8 @@ ui.Parent = widget
 
 -- Controls
 
--- Redclare variables for controls that will be created in the new UI
-local radiusBox, densityBox, scaleMinBox, scaleMaxBox, spacingBox, rotXMinBox, rotXMaxBox, rotZMinBox, rotZMaxBox
-local randomizeBtn, addBtn, clearBtn, fillBtn
-local avoidOverlapBtn, surfaceAngleBtn, physicsModeBtn, physicsSettleTimeBox, snapToGridBtn, gridSizeBox
-local assetListFrame, paletteNameBox, savePaletteBtn, loadPaletteBtn, deletePaletteBtn
-local presetNameBox, savePresetBtn, loadPresetBtn, deletePresetBtn, paletteList, presetList
+-- Controls table to hold all UI instances and avoid local variable limit
+local C = {}
 
 
 -- Main container setup
@@ -266,6 +268,8 @@ mainScrollFrame.Size = UDim2.new(1, 0, 1, 0)
 mainScrollFrame.BackgroundColor3 = Theme.Background
 mainScrollFrame.BorderSizePixel = 0
 mainScrollFrame.ScrollBarThickness = 6
+mainScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+mainScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
 mainScrollFrame.Parent = ui
 
 local mainLayout = Instance.new("UIListLayout")
@@ -287,8 +291,8 @@ onOffBar.Size = UDim2.new(1, 0, 0, 32)
 onOffBar.BackgroundTransparency = 1
 onOffBar.Parent = mainScrollFrame
 onOffBar.LayoutOrder = 1 -- Explicitly first
-local onOffBtn = createStyledButton("Kuas: Mati", onOffBar)
-onOffBtn.BackgroundColor3 = Theme.Red
+C.onOffBtn = createStyledButton("Kuas: Mati", onOffBar)
+C.onOffBtn.BackgroundColor3 = Theme.Red
 
 -- Main Action Bar
 local mainActionBar = Instance.new("Frame")
@@ -310,7 +314,7 @@ mainActionBarPadding.PaddingTop = UDim.new(0, 4)
 mainActionBarPadding.PaddingBottom = UDim.new(0, 4)
 mainActionBarPadding.Parent = mainActionBar
 
-local modeButtons = {}
+C.modeButtons = {}
 local modeNames = {"Paint", "Line", "Curve", "Fill", "Replace", "Stamp", "Erase"}
 local modeDisplayNames = {
 	Paint = "Kuas",
@@ -324,7 +328,7 @@ local modeDisplayNames = {
 
 for _, modeName in ipairs(modeNames) do
 	local btn = createStyledButton(modeDisplayNames[modeName], mainActionBar)
-	modeButtons[modeName] = btn
+	C.modeButtons[modeName] = btn
 end
 
 -- Brush Settings Section
@@ -355,9 +359,9 @@ local function createControlRow(parent, labelText, defaultValue)
 
 	return textBox, rowFrame
 end
-local radiusBox, radiusRow = createControlRow(brushSettingsContent, "Radius", 10)
-local densityBox, densityRow = createControlRow(brushSettingsContent, "Density", 10)
-local spacingBox, spacingRow = createControlRow(brushSettingsContent, "Spacing", 1.5)
+C.radiusBox, C.radiusRow = createControlRow(brushSettingsContent, "Radius", 10)
+C.densityBox, C.densityRow = createControlRow(brushSettingsContent, "Density", 10)
+C.spacingBox, C.spacingRow = createControlRow(brushSettingsContent, "Spacing", 1.5)
 
 local curveActionsFrame = Instance.new("Frame")
 curveActionsFrame.Name = "CurveActions"
@@ -369,8 +373,9 @@ local curveActionsLayout = Instance.new("UIListLayout")
 curveActionsLayout.FillDirection = Enum.FillDirection.Horizontal
 curveActionsLayout.Padding = UDim.new(0, 8)
 curveActionsLayout.Parent = curveActionsFrame
-local applyCurveBtn = createStyledButton("Terapkan Kurva", curveActionsFrame)
-local clearCurveBtn = createStyledButton("Hapus Kurva", curveActionsFrame)
+C.applyCurveBtn = createStyledButton("Terapkan Kurva", curveActionsFrame)
+C.clearCurveBtn = createStyledButton("Hapus Kurva", curveActionsFrame)
+C.curveActionsFrame = curveActionsFrame
 
 local function paintAlongCurve()
 	if #curvePoints < 2 then return end
@@ -397,7 +402,7 @@ local function paintAlongCurve()
 		return
 	end
 
-	local spacing = math.max(0.1, parseNumber(spacingBox.Text, 1.0))
+	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
 	local distanceSinceLastPaint = 0
 
 	for i = 1, #curvePoints - 1 do
@@ -475,10 +480,10 @@ local function paintAlongCurve()
 	clearCurve()
 end
 
-fillBtn = createStyledButton("Pilih 1 Part untuk Diisi", brushSettingsContent)
-fillBtn.BackgroundColor3 = Theme.Red
-fillBtn.Active = false
-fillBtn.Visible = false -- Sembunyikan secara default
+C.fillBtn = createStyledButton("Pilih 1 Part untuk Diisi", brushSettingsContent)
+C.fillBtn.BackgroundColor3 = Theme.Red
+C.fillBtn.Active = false
+C.fillBtn.Visible = false -- Sembunyikan secara default
 
 -- Transform Settings Section
 local transformSettingsContent, transformSettingsSection = createSection("Pengaturan Transformasi", mainScrollFrame)
@@ -523,11 +528,11 @@ local function createMinMaxRow(parent, labelText, defaultMin, defaultMax)
 
 	return minBox, maxBox, rowFrame
 end
-scaleMinBox, scaleMaxBox, _ = createMinMaxRow(transformSettingsContent, "Scale", 0.8, 1.3)
-rotXMinBox, rotXMaxBox, _ = createMinMaxRow(transformSettingsContent, "Rotasi X (°)", 0, 0)
-rotZMinBox, rotZMaxBox, _ = createMinMaxRow(transformSettingsContent, "Rotasi Z (°)", 0, 0)
+C.scaleMinBox, C.scaleMaxBox, _ = createMinMaxRow(transformSettingsContent, "Scale", 0.8, 1.3)
+C.rotXMinBox, C.rotXMaxBox, _ = createMinMaxRow(transformSettingsContent, "Rotasi X (°)", 0, 0)
+C.rotZMinBox, C.rotZMaxBox, _ = createMinMaxRow(transformSettingsContent, "Rotasi Z (°)", 0, 0)
 
-randomizeBtn = createStyledButton("Acak Pengaturan", transformSettingsContent)
+C.randomizeBtn = createStyledButton("Acak Pengaturan", transformSettingsContent)
 
 -- Advanced Settings Section
 local advancedSettingsContent, advancedSettingsSection = createSection("Pengaturan Lanjutan", mainScrollFrame)
@@ -541,21 +546,21 @@ advancedSettingsContent:FindFirstChild("UIListLayout"):Destroy() -- Hapus list l
 advancedSettingsSection.AutomaticSize = Enum.AutomaticSize.Y
 
 -- Asset Management Bar
-local assetActionBar = Instance.new("Frame")
-assetActionBar.Name = "AssetActionBar"
-assetActionBar.Size = UDim2.new(1, 0, 0, 32)
-assetActionBar.BackgroundTransparency = 1
-assetActionBar.Parent = mainScrollFrame
+C.assetActionBar = Instance.new("Frame")
+C.assetActionBar.Name = "AssetActionBar"
+C.assetActionBar.Size = UDim2.new(1, 0, 0, 32)
+C.assetActionBar.BackgroundTransparency = 1
+C.assetActionBar.Parent = mainScrollFrame
 local assetActionBarLayout = Instance.new("UIListLayout")
 assetActionBarLayout.FillDirection = Enum.FillDirection.Horizontal
 assetActionBarLayout.Padding = UDim.new(0, 8)
-assetActionBarLayout.Parent = assetActionBar
-addBtn = createStyledButton("Add Selected", assetActionBar)
-clearBtn = createStyledButton("Clear Asset List", assetActionBar)
+assetActionBarLayout.Parent = C.assetActionBar
+C.addBtn = createStyledButton("Add Selected", C.assetActionBar)
+C.clearBtn = createStyledButton("Clear Asset List", C.assetActionBar)
 
 
 -- Asset List Frame (akan diisi oleh updateAssetUIList)
-assetListFrame = Instance.new("ScrollingFrame")
+local assetListFrame = Instance.new("ScrollingFrame")
 assetListFrame.Size = UDim2.new(1, 0, 0, 300) -- Ukuran awal, akan disesuaikan
 assetListFrame.BackgroundColor3 = Theme.Section
 assetListFrame.BorderSizePixel = 0
@@ -565,6 +570,7 @@ local listLayout = Instance.new("UIListLayout")
 listLayout.Padding = UDim.new(0, 4)
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = assetListFrame
+C.assetListFrame = assetListFrame
 
 -- Palettes & Presets Section
 local palettesPresetsContent, palettesPresetsSection = createSection("Palet & Preset", mainScrollFrame)
@@ -577,23 +583,23 @@ paletteFrame.BackgroundTransparency = 1
 paletteFrame.Parent = palettesPresetsContent
 createStyledLabel("Palet Aset", paletteFrame).Size = UDim2.new(1, 0, 0, 20)
 
-paletteList = Instance.new("ScrollingFrame")
-paletteList.Size = UDim2.new(1, -130, 1, -35)
-paletteList.Position = UDim2.new(0, 0, 0, 30)
-paletteList.BackgroundColor3 = Theme.Background
-paletteList.Parent = paletteFrame
+C.paletteList = Instance.new("ScrollingFrame")
+C.paletteList.Size = UDim2.new(1, -130, 1, -35)
+C.paletteList.Position = UDim2.new(0, 0, 0, 30)
+C.paletteList.BackgroundColor3 = Theme.Background
+C.paletteList.Parent = paletteFrame
 local paletteListLayout = Instance.new("UIListLayout")
 paletteListLayout.Padding = UDim.new(0, 2)
 paletteListLayout.SortOrder = Enum.SortOrder.Name
-paletteListLayout.Parent = paletteList
+paletteListLayout.Parent = C.paletteList
 
-paletteNameBox = createStyledTextBox("Nama Palet", paletteFrame)
-paletteNameBox.Position = UDim2.new(1, -125, 0, 30)
-paletteNameBox.Size = UDim2.new(0, 120, 0, 28)
+C.paletteNameBox = createStyledTextBox("Nama Palet", paletteFrame)
+C.paletteNameBox.Position = UDim2.new(1, -125, 0, 30)
+C.paletteNameBox.Size = UDim2.new(0, 120, 0, 28)
 
-savePaletteBtn = createStyledButton("Simpan", paletteFrame)
-savePaletteBtn.Position = UDim2.new(1, -125, 0, 60)
-savePaletteBtn.Size = UDim2.new(0, 120, 0, 28)
+C.savePaletteBtn = createStyledButton("Simpan", paletteFrame)
+C.savePaletteBtn.Position = UDim2.new(1, -125, 0, 60)
+C.savePaletteBtn.Size = UDim2.new(0, 120, 0, 28)
 
 local paletteActionRow = Instance.new("Frame")
 paletteActionRow.Size = UDim2.new(0, 120, 0, 28)
@@ -604,8 +610,8 @@ local paletteActionLayout = Instance.new("UIListLayout")
 paletteActionLayout.FillDirection = Enum.FillDirection.Horizontal
 paletteActionLayout.Padding = UDim.new(0, 4)
 paletteActionLayout.Parent = paletteActionRow
-loadPaletteBtn = createStyledButton("Muat", paletteActionRow)
-deletePaletteBtn = createStyledButton("Hapus", paletteActionRow)
+C.loadPaletteBtn = createStyledButton("Muat", paletteActionRow)
+C.deletePaletteBtn = createStyledButton("Hapus", paletteActionRow)
 
 -- Presets UI
 local presetFrame = Instance.new("Frame")
@@ -618,23 +624,23 @@ presetFrame:FindFirstChild("TextLabel").LayoutOrder = 2
 paletteFrame.LayoutOrder = 1
 presetFrame.LayoutOrder = 2
 
-local presetList = Instance.new("ScrollingFrame")
-presetList.Size = UDim2.new(1, -130, 1, -35)
-presetList.Position = UDim2.new(0, 5, 0, 30)
-presetList.BackgroundColor3 = Theme.Background
-presetList.Parent = presetFrame
+C.presetList = Instance.new("ScrollingFrame")
+C.presetList.Size = UDim2.new(1, -130, 1, -35)
+C.presetList.Position = UDim2.new(0, 5, 0, 30)
+C.presetList.BackgroundColor3 = Theme.Background
+C.presetList.Parent = presetFrame
 local presetListLayout = Instance.new("UIListLayout")
 presetListLayout.Padding = UDim.new(0, 2)
 presetListLayout.SortOrder = Enum.SortOrder.Name
-presetListLayout.Parent = presetList
+presetListLayout.Parent = C.presetList
 
-presetNameBox = createStyledTextBox("Nama Preset", presetFrame)
-presetNameBox.Position = UDim2.new(1, -125, 0, 30)
-presetNameBox.Size = UDim2.new(0, 120, 0, 28)
+C.presetNameBox = createStyledTextBox("Nama Preset", presetFrame)
+C.presetNameBox.Position = UDim2.new(1, -125, 0, 30)
+C.presetNameBox.Size = UDim2.new(0, 120, 0, 28)
 
-savePresetBtn = createStyledButton("Simpan", presetFrame)
-savePresetBtn.Position = UDim2.new(1, -125, 0, 60)
-savePresetBtn.Size = UDim2.new(0, 120, 0, 28)
+C.savePresetBtn = createStyledButton("Simpan", presetFrame)
+C.savePresetBtn.Position = UDim2.new(1, -125, 0, 60)
+C.savePresetBtn.Size = UDim2.new(0, 120, 0, 28)
 
 local presetActionRow = Instance.new("Frame")
 presetActionRow.Size = UDim2.new(0, 120, 0, 28)
@@ -645,8 +651,8 @@ local presetActionLayout = Instance.new("UIListLayout")
 presetActionLayout.FillDirection = Enum.FillDirection.Horizontal
 presetActionLayout.Padding = UDim.new(0, 4)
 presetActionLayout.Parent = presetActionRow
-loadPresetBtn = createStyledButton("Muat", presetActionRow)
-deletePresetBtn = createStyledButton("Hapus", presetActionRow)
+C.loadPresetBtn = createStyledButton("Muat", presetActionRow)
+C.deletePresetBtn = createStyledButton("Hapus", presetActionRow)
 
 
 local function createToggleRow(parent, labelText)
@@ -678,17 +684,17 @@ end
 local avoidOverlapContainer = Instance.new("Frame")
 avoidOverlapContainer.BackgroundTransparency = 1
 avoidOverlapContainer.Parent = advancedSettingsContent
-avoidOverlapBtn, _ = createToggleRow(avoidOverlapContainer, "Hindari Tumpang Tindih")
+C.avoidOverlapBtn, _ = createToggleRow(avoidOverlapContainer, "Hindari Tumpang Tindih")
 
 local surfaceAngleContainer = Instance.new("Frame")
 surfaceAngleContainer.BackgroundTransparency = 1
 surfaceAngleContainer.Parent = advancedSettingsContent
-surfaceAngleBtn, _ = createToggleRow(surfaceAngleContainer, "Kunci Permukaan")
+C.surfaceAngleBtn, _ = createToggleRow(surfaceAngleContainer, "Kunci Permukaan")
 
 local physicsModeContainer = Instance.new("Frame")
 physicsModeContainer.BackgroundTransparency = 1
 physicsModeContainer.Parent = advancedSettingsContent
-physicsModeBtn, _ = createToggleRow(physicsModeContainer, "Mode Fisika")
+C.physicsModeBtn, _ = createToggleRow(physicsModeContainer, "Mode Fisika")
 
 local physicsSettleTimeContainer = Instance.new("Frame")
 physicsSettleTimeContainer.BackgroundTransparency = 1
@@ -708,18 +714,71 @@ local physicsLabel = createStyledLabel("Waktu Tunggu Fisika", physicsSettleTimeR
 physicsLabel.Size = UDim2.new(1, 0, 0, 18)
 physicsLabel.TextXAlignment = Enum.TextXAlignment.Center
 physicsLabel.LayoutOrder = 1
-physicsSettleTimeBox = createStyledTextBox(physicsSettleTime, physicsSettleTimeRow)
-physicsSettleTimeBox.Size = UDim2.new(1, 0, 0, 28)
-physicsSettleTimeBox.LayoutOrder = 2
+C.physicsSettleTimeBox = createStyledTextBox(physicsSettleTime, physicsSettleTimeRow)
+C.physicsSettleTimeBox.Size = UDim2.new(1, 0, 0, 28)
+C.physicsSettleTimeBox.LayoutOrder = 2
 
 local snapToGridContainer = Instance.new("Frame")
 snapToGridContainer.BackgroundTransparency = 1
 snapToGridContainer.Parent = advancedSettingsContent
-snapToGridBtn, _ = createToggleRow(snapToGridContainer, "Tempel ke Grid")
+C.snapToGridBtn, _ = createToggleRow(snapToGridContainer, "Tempel ke Grid")
 
 local gridSizeContainer = Instance.new("Frame")
 gridSizeContainer.BackgroundTransparency = 1
 gridSizeContainer.Parent = advancedSettingsContent
+
+local densityPreviewContainer = Instance.new("Frame")
+densityPreviewContainer.BackgroundTransparency = 1
+densityPreviewContainer.Parent = advancedSettingsContent
+C.densityPreviewBtn, _ = createToggleRow(densityPreviewContainer, "Pratinjau Kepadatan")
+
+local maskingContainer = Instance.new("Frame")
+maskingContainer.BackgroundTransparency = 1
+maskingContainer.Parent = advancedSettingsContent
+local maskingBtn, maskingRowFrame = createToggleRow(maskingContainer, "Masking")
+C.maskingModeBtn = maskingBtn
+C.maskingModeBtn.Text = "Mode: Off"
+C.maskingModeBtn.LayoutOrder = 2
+
+C.maskingTargetLabel = createStyledLabel("Target: None", maskingRowFrame)
+C.maskingTargetLabel.Size = UDim2.new(1, 0, 0, 18)
+C.maskingTargetLabel.TextXAlignment = Enum.TextXAlignment.Center
+C.maskingTargetLabel.LayoutOrder = 3
+
+C.pickMaskTargetBtn = createStyledButton("Ambil dari Seleksi", maskingRowFrame)
+C.pickMaskTargetBtn.Size = UDim2.new(1, 0, 0, 28)
+C.pickMaskTargetBtn.LayoutOrder = 4
+
+C.maskingInputFrame = Instance.new("Frame")
+C.maskingInputFrame.AutomaticSize = Enum.AutomaticSize.Y
+C.maskingInputFrame.BackgroundTransparency = 1
+C.maskingInputFrame.LayoutOrder = 5
+C.maskingInputFrame.Parent = maskingRowFrame
+C.maskingInputFrame.Visible = false -- Hide by default
+
+local inputLayout = Instance.new("UIListLayout")
+inputLayout.Parent = C.maskingInputFrame
+inputLayout.SortOrder = Enum.SortOrder.LayoutOrder
+inputLayout.Padding = UDim.new(0, 4)
+
+C.maskingTextBox = createStyledTextBox("", C.maskingInputFrame)
+C.maskingTextBox.Size = UDim2.new(1, 0, 0, 28)
+C.maskingTextBox.PlaceholderText = "Enter Tag or R,G,B color..."
+
+C.materialGridFrame = Instance.new("ScrollingFrame")
+C.materialGridFrame.Size = UDim2.new(1, 0, 0, 150)
+C.materialGridFrame.BackgroundColor3 = Theme.Background
+C.materialGridFrame.BorderSizePixel = 1
+C.materialGridFrame.BorderColor3 = Theme.Border
+C.materialGridFrame.ScrollBarThickness = 6
+C.materialGridFrame.Parent = C.maskingInputFrame
+C.materialGridFrame.Visible = false
+
+local gridLayout = Instance.new("UIGridLayout")
+gridLayout.CellSize = UDim2.new(0, 56, 0, 56)
+gridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
+gridLayout.SortOrder = Enum.SortOrder.Name
+gridLayout.Parent = C.materialGridFrame
 
 local gridSizeRow = Instance.new("Frame")
 gridSizeRow.Size = UDim2.new(1, 0, 0, 28)
@@ -735,16 +794,16 @@ local gridLabel = createStyledLabel("Ukuran Grid", gridSizeRow)
 gridLabel.Size = UDim2.new(1, 0, 0, 18)
 gridLabel.TextXAlignment = Enum.TextXAlignment.Center
 gridLabel.LayoutOrder = 1
-gridSizeBox = createStyledTextBox(gridSize, gridSizeRow)
-gridSizeBox.Size = UDim2.new(1, 0, 0, 28)
-gridSizeBox.LayoutOrder = 2
+C.gridSizeBox = createStyledTextBox(gridSize, gridSizeRow)
+C.gridSizeBox.Size = UDim2.new(1, 0, 0, 28)
+C.gridSizeBox.LayoutOrder = 2
 
-assetListFrame.LayoutOrder = 3
-assetActionBar.LayoutOrder = 4
+C.assetListFrame.LayoutOrder = 3
+C.assetActionBar.LayoutOrder = 4
 
 -- Utility Functions
 local function updateModeButtonsUI()
-	for modeName, button in pairs(modeButtons) do
+	for modeName, button in pairs(C.modeButtons) do
 		if modeName == currentMode then
 			button.BackgroundColor3 = Theme.Accent
 		else
@@ -755,44 +814,126 @@ end
 
 local function updateOnOffButtonUI()
 	if active then
-		onOffBtn.Text = "Kuas: Aktif"
-		onOffBtn.BackgroundColor3 = Theme.Green
+		C.onOffBtn.Text = "Kuas: Aktif"
+		C.onOffBtn.BackgroundColor3 = Theme.Green
 	else
-		onOffBtn.Text = "Kuas: Mati"
-		onOffBtn.BackgroundColor3 = Theme.Red
+		C.onOffBtn.Text = "Kuas: Mati"
+		C.onOffBtn.BackgroundColor3 = Theme.Red
 	end
 end
 
 local function updateToggleButtonsUI()
 	-- Avoid Overlap
-	avoidOverlapBtn.Text = avoidOverlap and "Ya" or "Tidak"
-	avoidOverlapBtn.BackgroundColor3 = avoidOverlap and Theme.Green or Theme.Red
+	C.avoidOverlapBtn.Text = avoidOverlap and "Ya" or "Tidak"
+	C.avoidOverlapBtn.BackgroundColor3 = avoidOverlap and Theme.Green or Theme.Red
 
 	-- Surface Angle
 	if surfaceAngleMode == "Off" then
-		surfaceAngleBtn.Text = "Kunci Permukaan: Mati"
+		C.surfaceAngleBtn.Text = "Kunci Permukaan: Mati"
 	elseif surfaceAngleMode == "Floor" then
-		surfaceAngleBtn.Text = "Kunci Permukaan: Lantai"
+		C.surfaceAngleBtn.Text = "Kunci Permukaan: Lantai"
 	else -- Pasti "Wall"
-		surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
+		C.surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
 	end
 
 	-- Physics Mode
 	if physicsModeEnabled then
-		physicsModeBtn.Text = "Aktif"
-		physicsModeBtn.BackgroundColor3 = Theme.Green
+		C.physicsModeBtn.Text = "Aktif"
+		C.physicsModeBtn.BackgroundColor3 = Theme.Green
 	else
-		physicsModeBtn.Text = "Mati"
-		physicsModeBtn.BackgroundColor3 = Theme.Red
+		C.physicsModeBtn.Text = "Mati"
+		C.physicsModeBtn.BackgroundColor3 = Theme.Red
 	end
 
 	-- Snap to Grid
-	snapToGridBtn.Text = snapToGridEnabled and "Ya" or "Tidak"
-	snapToGridBtn.BackgroundColor3 = snapToGridEnabled and Theme.Green or Theme.Red
+	C.snapToGridBtn.Text = snapToGridEnabled and "Ya" or "Tidak"
+	C.snapToGridBtn.BackgroundColor3 = snapToGridEnabled and Theme.Green or Theme.Red
+
+	-- Density Preview
+	C.densityPreviewBtn.Text = densityPreviewEnabled and "Ya" or "Tidak"
+	C.densityPreviewBtn.BackgroundColor3 = densityPreviewEnabled and Theme.Green or Theme.Red
+end
+
+local function updateMaskingUI()
+	C.maskingModeBtn.Text = "Mode: " .. maskingMode
+
+	local isMaskingOn = maskingMode ~= "Off"
+	C.pickMaskTargetBtn.Visible = isMaskingOn
+	C.maskingTargetLabel.Visible = isMaskingOn
+	C.maskingInputFrame.Visible = isMaskingOn
+
+	if not isMaskingOn then
+		C.maskingTargetLabel.Text = "Target: None"
+		return
+	end
+
+	C.maskingTextBox.Visible = (maskingMode == "Color" or maskingMode == "Tag")
+	C.materialGridFrame.Visible = (maskingMode == "Material")
+
+	if maskingMode == "Color" then
+		C.maskingTextBox.PlaceholderText = "Enter R,G,B (e.g., 255,0,0)"
+	elseif maskingMode == "Tag" then
+		C.maskingTextBox.PlaceholderText = "Enter Tag name..."
+	end
+
+	-- Update selection stroke
+	for _, btn in ipairs(C.materialGridFrame:GetChildren()) do
+		if btn:IsA("ImageButton") then
+			local stroke = btn:FindFirstChildOfClass("UIStroke")
+			if maskingValue and maskingMode == "Material" and btn.Name == maskingValue.Name then
+				stroke.Enabled = true
+				stroke.Color = Theme.Accent
+			else
+				stroke.Enabled = false
+			end
+		end
+	end
+
+	if maskingValue then
+		if maskingMode == "Color" then
+			local c = maskingValue
+			C.maskingTargetLabel.Text = string.format("Target: %.2f, %.2f, %.2f", c.r, c.g, c.b)
+			C.maskingTextBox.Text = string.format("%d, %d, %d", c.r * 255, c.g * 255, c.b * 255)
+		elseif maskingMode == "Tag" then
+			C.maskingTargetLabel.Text = "Target: " .. tostring(maskingValue)
+			C.maskingTextBox.Text = tostring(maskingValue)
+		elseif maskingMode == "Material" then
+			C.maskingTargetLabel.Text = "Target: " .. maskingValue.Name
+		end
+	else
+		C.maskingTargetLabel.Text = "Target: None"
+		C.maskingTextBox.Text = ""
+	end
 end
 
 local function trim(s)
 	return s:match("^%s*(.-)%s*$") or s
+end
+
+local function populateMaterialPicker()
+	for _, material in ipairs(Enum.Material:GetEnumItems()) do
+		local btn = Instance.new("ImageButton")
+		btn.Name = material.Name
+		btn.Size = UDim2.new(0, 56, 0, 56)
+		btn.BackgroundColor3 = Theme.Section
+		btn.Image = "rbxasset://textures/terrain/materials/v2/" .. material.Name .. ".png"
+		btn.Parent = C.materialGridFrame
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 4)
+		corner.Parent = btn
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Thickness = 2
+		stroke.Color = Theme.Border
+		stroke.Enabled = false
+		stroke.Parent = btn
+
+		btn.MouseButton1Click:Connect(function()
+			maskingValue = material
+			updateMaskingUI()
+		end)
+	end
 end
 
 local function snapPositionToGrid(position, size)
@@ -888,7 +1029,7 @@ local function deleteAssetPalette(name)
 
 	if selectedPalette == name then
 		selectedPalette = nil
-		paletteNameBox.Text = "Nama Palet"
+		C.paletteNameBox.Text = "Nama Palet"
 	end
 
 	updatePaletteListUI()
@@ -903,7 +1044,7 @@ local function deletePreset(name)
 
 	if selectedPreset == name then
 		selectedPreset = nil
-		presetNameBox.Text = "Nama Preset"
+		C.presetNameBox.Text = "Nama Preset"
 	end
 
 	updatePresetListUI()
@@ -941,19 +1082,22 @@ local function savePreset(name)
 	end
 
 	presets[name] = {
-		radius = parseNumber(radiusBox.Text, 10),
-		density = parseNumber(densityBox.Text, 10),
-		scaleMin = parseNumber(scaleMinBox.Text, 0.8),
-		scaleMax = parseNumber(scaleMaxBox.Text, 1.3),
-		spacing = parseNumber(spacingBox.Text, 1.5),
-		rotXMin = parseNumber(rotXMinBox.Text, 0),
-		rotXMax = parseNumber(rotXMaxBox.Text, 0),
-		rotZMin = parseNumber(rotZMinBox.Text, 0),
-		rotZMax = parseNumber(rotZMaxBox.Text, 0),
+		radius = parseNumber(C.radiusBox.Text, 10),
+		density = parseNumber(C.densityBox.Text, 10),
+		scaleMin = parseNumber(C.scaleMinBox.Text, 0.8),
+		scaleMax = parseNumber(C.scaleMaxBox.Text, 1.3),
+		spacing = parseNumber(C.spacingBox.Text, 1.5),
+		rotXMin = parseNumber(C.rotXMinBox.Text, 0),
+		rotXMax = parseNumber(C.rotXMaxBox.Text, 0),
+		rotZMin = parseNumber(C.rotZMinBox.Text, 0),
+		rotZMax = parseNumber(C.rotZMaxBox.Text, 0),
 		avoidOverlap = avoidOverlap,
 		surfaceAngleMode = surfaceAngleMode,
 		snapToGridEnabled = snapToGridEnabled,
-		gridSize = parseNumber(gridSizeBox.Text, 4),
+		gridSize = parseNumber(C.gridSizeBox.Text, 4),
+		densityPreviewEnabled = densityPreviewEnabled,
+		maskingMode = maskingMode,
+		maskingValue = (maskingMode == "Color" and {R=maskingValue.r, G=maskingValue.g, B=maskingValue.b}) or (maskingMode == "Material" and maskingValue.Name) or maskingValue,
 		assetStates = assetStates,
 	}
 	savePresets()
@@ -1052,8 +1196,8 @@ local function setupViewport(viewport, asset)
 end
 
 local function updateAssetUIList()
-	assetListFrame.CanvasPosition = Vector2.new(0, 0)
-	for _, v in ipairs(assetListFrame:GetChildren()) do
+	C.assetListFrame.CanvasPosition = Vector2.new(0, 0)
+	for _, v in ipairs(C.assetListFrame:GetChildren()) do
 		if v:IsA("GuiObject") and not v:IsA("UIListLayout") then
 			v:Destroy()
 		end
@@ -1061,8 +1205,9 @@ local function updateAssetUIList()
 
 	local children = assetsFolder:GetChildren()
 	local rowHeight = 70
+	local listLayout = C.assetListFrame:FindFirstChildOfClass("UIListLayout")
 	local canvasHeight = #children * rowHeight + (#children - 1) * listLayout.Padding.Offset
-	assetListFrame.CanvasSize = UDim2.new(0, 0, 0, math.max(canvasHeight, 1))
+	C.assetListFrame.CanvasSize = UDim2.new(0, 0, 0, math.max(canvasHeight, 1))
 
 	for i, asset in ipairs(children) do
 		local assetName = asset.Name
@@ -1073,7 +1218,7 @@ local function updateAssetUIList()
 		row.Size = UDim2.new(1, 0, 0, rowHeight)
 		row.BackgroundColor3 = Theme.Background
 		row.LayoutOrder = i
-		row.Parent = assetListFrame
+		row.Parent = C.assetListFrame
 		Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
 
 		local border = Instance.new("UIStroke")
@@ -1222,33 +1367,51 @@ local function loadPreset(name)
 	local data = presets[name]
 	if not data then return end
 
-	radiusBox.Text = tostring(data.radius)
-	densityBox.Text = tostring(data.density)
-	scaleMinBox.Text = tostring(data.scaleMin)
-	scaleMaxBox.Text = tostring(data.scaleMax)
-	spacingBox.Text = tostring(data.spacing)
-	rotXMinBox.Text = tostring(data.rotXMin)
-	rotXMaxBox.Text = tostring(data.rotXMax)
-	rotZMinBox.Text = tostring(data.rotZMin)
-	rotZMaxBox.Text = tostring(data.rotZMax)
+	C.radiusBox.Text = tostring(data.radius)
+	C.densityBox.Text = tostring(data.density)
+	C.scaleMinBox.Text = tostring(data.scaleMin)
+	C.scaleMaxBox.Text = tostring(data.scaleMax)
+	C.spacingBox.Text = tostring(data.spacing)
+	C.rotXMinBox.Text = tostring(data.rotXMin)
+	C.rotXMaxBox.Text = tostring(data.rotXMax)
+	C.rotZMinBox.Text = tostring(data.rotZMin)
+	C.rotZMaxBox.Text = tostring(data.rotZMax)
 
 	avoidOverlap = data.avoidOverlap
-	avoidOverlapBtn.Text = avoidOverlap and "Ya" or "Tidak"
-	avoidOverlapBtn.BackgroundColor3 = avoidOverlap and Theme.Green or Theme.Red
+	C.avoidOverlapBtn.Text = avoidOverlap and "Ya" or "Tidak"
+	C.avoidOverlapBtn.BackgroundColor3 = avoidOverlap and Theme.Green or Theme.Red
 
 	surfaceAngleMode = data.surfaceAngleMode or "Off"
 	if surfaceAngleMode == "Off" then
-		surfaceAngleBtn.Text = "Kunci Permukaan: Mati"
+		C.surfaceAngleBtn.Text = "Kunci Permukaan: Mati"
 	elseif surfaceAngleMode == "Floor" then
-		surfaceAngleBtn.Text = "Kunci Permukaan: Lantai"
+		C.surfaceAngleBtn.Text = "Kunci Permukaan: Lantai"
 	else
-		surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
+		C.surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
 	end
 
 	snapToGridEnabled = data.snapToGridEnabled or false
 	gridSize = data.gridSize or 4
-	gridSizeBox.Text = tostring(gridSize)
+	C.gridSizeBox.Text = tostring(gridSize)
+
+	densityPreviewEnabled = data.densityPreviewEnabled
+	if densityPreviewEnabled == nil then densityPreviewEnabled = true end
+
+	maskingMode = data.maskingMode or "Off"
+	if data.maskingValue then
+		if maskingMode == "Color" then
+			maskingValue = Color3.new(data.maskingValue.R, data.maskingValue.G, data.maskingValue.B)
+		elseif maskingMode == "Material" then
+			maskingValue = Enum.Material[data.maskingValue]
+		else -- Tag or Off
+			maskingValue = data.maskingValue
+		end
+	else
+		maskingValue = nil
+	end
+
 	updateToggleButtonsUI()
+	updateMaskingUI()
 
 	if data.assetStates then
 		for assetName, state in pairs(data.assetStates) do
@@ -1360,7 +1523,7 @@ local function findSurfacePositionAndNormal()
 	local unitRay = camera:ViewportPointToRay(mouse.X, mouse.Y)
 
 	local params = RaycastParams.new()
-	params.FilterDescendantsInstances = { previewFolder, getWorkspaceContainer() }
+	params.FilterDescendantsInstances = { previewFolder, getWorkspaceContainer(), densityPreviewFolder, curvePreviewFolder }
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
 
@@ -1380,8 +1543,8 @@ local function findSurfacePositionAndNormal()
 end
 
 placeAsset = function(assetToClone, position, normal)
-	local smin = parseNumber(scaleMinBox.Text, 0.8)
-	local smax = parseNumber(scaleMaxBox.Text, 1.2)
+	local smin = parseNumber(C.scaleMinBox.Text, 0.8)
+	local smax = parseNumber(C.scaleMaxBox.Text, 1.2)
 	if smin <= 0 then smin = 0.1 end
 	if smax < smin then smax = smin end
 
@@ -1408,10 +1571,10 @@ placeAsset = function(assetToClone, position, normal)
 		effectiveNormal = Vector3.new(0, 1, 0) -- Paksa vektor 'up'
 	else
 		-- Mode "Off" atau "Wall" menggunakan pengaturan UI
-		local rotXMin = math.rad(parseNumber(rotXMinBox.Text, 0))
-		local rotXMax = math.rad(parseNumber(rotXMaxBox.Text, 0))
-		local rotZMin = math.rad(parseNumber(rotZMinBox.Text, 0))
-		local rotZMax = math.rad(parseNumber(rotZMaxBox.Text, 0))
+		local rotXMin = math.rad(parseNumber(C.rotXMinBox.Text, 0))
+		local rotXMax = math.rad(parseNumber(C.rotXMaxBox.Text, 0))
+		local rotZMin = math.rad(parseNumber(C.rotZMinBox.Text, 0))
+		local rotZMax = math.rad(parseNumber(C.rotZMaxBox.Text, 0))
 		xrot = randFloat(rotXMin, rotXMax)
 		yrot = math.rad(math.random() * 360)
 		zrot = randFloat(rotZMin, rotZMax)
@@ -1525,14 +1688,14 @@ local function anchorPhysicsGroup(group, parentFolder)
 end
 
 local function paintAt(center, surfaceNormal)
-	local radius = math.max(0.1, parseNumber(radiusBox.Text, 10))
+	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
 	local physicsGroup = {} -- Deklarasikan sebagai tabel lokal
 	-- Baca nilai density
-	local density = math.max(1, math.floor(parseNumber(densityBox.Text, 10)))
+	local density = math.max(1, math.floor(parseNumber(C.densityBox.Text, 10)))
 
-	local smin = parseNumber(scaleMinBox.Text, 0.8)
-	local smax = parseNumber(scaleMaxBox.Text, 1.2)
-	local spacing = math.max(0.1, parseNumber(spacingBox.Text, 1.0))
+	local smin = parseNumber(C.scaleMinBox.Text, 0.8)
+	local smax = parseNumber(C.scaleMaxBox.Text, 1.2)
+	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
 	if smin <= 0 then
 		smin = 0.1
 	end
@@ -1629,19 +1792,33 @@ local function paintAt(center, surfaceNormal)
 			params.FilterType = Enum.RaycastFilterType.Exclude
 			local result = workspace:Raycast(rayOrigin, rayDir, params)
 
-			if result then
-				local posOnSurface = result.Position
-				local ok = true
-				for _, p in ipairs(placed) do
-					if (p - posOnSurface).Magnitude < spacing then
-						ok = false
-						break
+			if result and result.Instance then
+				local isValidTarget = true
+				if maskingMode ~= "Off" and maskingValue then
+					local targetPart = result.Instance
+					if maskingMode == "Material" then
+						isValidTarget = (targetPart.Material == maskingValue)
+					elseif maskingMode == "Color" then
+						isValidTarget = (targetPart.Color == maskingValue)
+					elseif maskingMode == "Tag" then
+						isValidTarget = CollectionService:HasTag(targetPart, maskingValue)
 					end
 				end
-				if ok then
-					found = true
-					candidatePos = posOnSurface
-					candidateNormal = result.Normal -- Use the normal from the specific point
+
+				if isValidTarget then
+					local posOnSurface = result.Position
+					local ok = true
+					for _, p in ipairs(placed) do
+						if (p - posOnSurface).Magnitude < spacing then
+							ok = false
+							break
+						end
+					end
+					if ok then
+						found = true
+						candidatePos = posOnSurface
+						candidateNormal = result.Normal -- Use the normal from the specific point
+					end
 				end
 			end
 		end
@@ -1673,7 +1850,7 @@ local function paintAt(center, surfaceNormal)
 end
 
 local function eraseAt(center)
-	local radius = math.max(0.1, parseNumber(radiusBox.Text, 10))
+	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
 	local container = workspace:FindFirstChild(WORKSPACE_FOLDER_NAME)
 	if not container then
 		return -- Nothing to erase
@@ -1728,7 +1905,7 @@ end
 
 
 local function paintAlongLine(startPos, endPos)
-	local spacing = math.max(0.1, parseNumber(spacingBox.Text, 1.0))
+	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
 	local lineVector = endPos - startPos
 	local lineLength = lineVector.Magnitude
 	if lineLength < spacing then return end
@@ -1803,8 +1980,8 @@ end
 local function fillArea(part)
 	if not part then return end
 
-	local density = math.max(1, math.floor(parseNumber(densityBox.Text, 10)))
-	local spacing = math.max(0.1, parseNumber(spacingBox.Text, 1.0))
+	local density = math.max(1, math.floor(parseNumber(C.densityBox.Text, 10)))
+	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
 
 	-- Filter for only active assets
 	local allAssets = assetsFolder:GetChildren()
@@ -1887,7 +2064,7 @@ end
 local function replaceAt(center)
 	if not sourceAsset or not targetAsset then return end
 
-	local radius = math.max(0.1, parseNumber(radiusBox.Text, 10))
+	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
 	local container = workspace:FindFirstChild(WORKSPACE_FOLDER_NAME)
 	if not container then return end
 
@@ -1998,6 +2175,95 @@ end
 
 
 -- Mouse and Tool Activation Logic
+updateDensityPreview = function(center, surfaceNormal)
+	densityPreviewFolder:ClearAllChildren()
+
+	if not center or not surfaceNormal or currentMode ~= "Paint" or not densityPreviewEnabled then
+		return
+	end
+
+	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
+	local density = math.max(1, math.floor(parseNumber(C.densityBox.Text, 10)))
+	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
+
+	local placed = {}
+
+	local up = surfaceNormal
+	local look = Vector3.new(1, 0, 0)
+	if math.abs(up:Dot(look)) > 0.99 then
+		look = Vector3.new(0, 0, 1)
+	end
+	local right = look:Cross(up).Unit
+	local look_actual = up:Cross(right).Unit
+	local planeCFrame = CFrame.fromMatrix(center, right, up, -look_actual)
+
+	local container = getWorkspaceContainer()
+
+	for i = 1, density do
+		local found = false
+		local candidatePos = nil
+		local attempts = 0
+
+		while not found and attempts < 12 do
+			attempts = attempts + 1
+			local offset2D = randomPointInCircle(radius)
+			local spawnPos = planeCFrame:PointToWorldSpace(Vector3.new(offset2D.X, 0, offset2D.Z))
+
+			local rayOrigin = spawnPos + surfaceNormal * 5
+			local rayDir = -surfaceNormal * 10
+
+			local params = RaycastParams.new()
+			params.FilterDescendantsInstances = { previewFolder, container, densityPreviewFolder, curvePreviewFolder }
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			local result = workspace:Raycast(rayOrigin, rayDir, params)
+
+			if result and result.Instance then
+				local isValidTarget = true
+				if maskingMode ~= "Off" and maskingValue then
+					local targetPart = result.Instance
+					if maskingMode == "Material" then
+						isValidTarget = (targetPart.Material == maskingValue)
+					elseif maskingMode == "Color" then
+						isValidTarget = (targetPart.Color == maskingValue)
+					elseif maskingMode == "Tag" then
+						isValidTarget = CollectionService:HasTag(targetPart, maskingValue)
+					end
+				end
+
+				if isValidTarget then
+					local posOnSurface = result.Position
+					local ok = true
+					for _, p in ipairs(placed) do
+						if (p - posOnSurface).Magnitude < spacing then
+							ok = false
+							break
+						end
+					end
+					if ok then
+						found = true
+						candidatePos = posOnSurface
+					end
+				end
+			end
+		end
+
+		if candidatePos then
+			local marker = Instance.new("Part")
+			marker.Shape = Enum.PartType.Ball
+			marker.Size = Vector3.new(0.5, 0.5, 0.5)
+			marker.Anchored = true
+			marker.CanCollide = false
+			marker.CanQuery = false
+			marker.CanTouch = false
+			marker.Color = Color3.fromRGB(255, 255, 0)
+			marker.Material = Enum.Material.Neon
+			marker.Transparency = 0.6
+			marker.Position = candidatePos
+			marker.Parent = densityPreviewFolder
+			table.insert(placed, candidatePos)
+		end
+	end
+end
 
 local function updatePreview()
 	if not mouse or not previewPart then
@@ -2016,11 +2282,12 @@ local function updatePreview()
 			previewPart.Color = Color3.fromRGB(255, 80, 80) -- Red for Erase
 		end
 
-		local radius = math.max(0.1, parseNumber(radiusBox.Text, 10))
+		local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
 		local surfacePos, normal = findSurfacePositionAndNormal()
 
 		if not surfacePos or not normal or currentMode == "Line" then
 			previewPart.Parent = nil -- Sembunyikan untuk mode Garis (sebelum titik pertama) dan Isi
+			updateDensityPreview(nil, nil)
 		else
 			previewPart.Parent = previewFolder
 			local pos = surfacePos
@@ -2031,6 +2298,7 @@ local function updatePreview()
 			previewPart.CFrame = CFrame.fromMatrix(pos + normal * 0.05, right, normal, -lookActual)
 			previewPart.Size = Vector3.new(1, 1, 1)
 			cyl.Scale = Vector3.new(radius * 2, 0.02, radius * 2)
+			updateDensityPreview(pos, normal)
 		end
 	end
 
@@ -2071,7 +2339,7 @@ local function onMove()
 	if isPainting and (currentMode == "Paint" or currentMode == "Erase" or currentMode == "Replace") then
 		local center, normal = findSurfacePositionAndNormal()
 		if center and normal and lastPaintPosition then
-			local spacing = math.max(0.1, parseNumber(spacingBox.Text, 1.0))
+			local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
 			if (center - lastPaintPosition).Magnitude >= spacing then
 				handlePaint(center, normal)
 			end
@@ -2114,9 +2382,9 @@ local function updateFillSelection()
 	if currentMode ~= "Fill" then
 		partToFill = nil
 		fillSelectionBox.Adornee = nil
-		fillBtn.Active = false
-		fillBtn.Text = "Pilih 1 Part untuk Diisi"
-		fillBtn.BackgroundColor3 = Theme.Red
+		C.fillBtn.Active = false
+		C.fillBtn.Text = "Pilih 1 Part untuk Diisi"
+		C.fillBtn.BackgroundColor3 = Theme.Red
 		return
 	end
 
@@ -2124,25 +2392,25 @@ local function updateFillSelection()
 	if #selection == 1 and selection[1]:IsA("BasePart") then
 		partToFill = selection[1]
 		fillSelectionBox.Adornee = partToFill
-		fillBtn.Active = true
-		fillBtn.Text = "Isi Part: " .. partToFill.Name
-		fillBtn.BackgroundColor3 = Theme.Green
+		C.fillBtn.Active = true
+		C.fillBtn.Text = "Isi Part: " .. partToFill.Name
+		C.fillBtn.BackgroundColor3 = Theme.Green
 	else
 		partToFill = nil
 		fillSelectionBox.Adornee = nil
-		fillBtn.Active = false
-		fillBtn.Text = "Pilih 1 Part untuk Diisi"
-		fillBtn.BackgroundColor3 = Theme.Red
+		C.fillBtn.Active = false
+		C.fillBtn.Text = "Pilih 1 Part untuk Diisi"
+		C.fillBtn.BackgroundColor3 = Theme.Red
 	end
 end
 
 local function randomizeSettings()
-	scaleMinBox.Text = string.format("%.2f", randFloat(0.5, 1.0))
-	scaleMaxBox.Text = string.format("%.2f", randFloat(1.1, 2.5))
-	rotXMinBox.Text = tostring(math.random(0, 45))
-	rotXMaxBox.Text = tostring(math.random(45, 90))
-	rotZMinBox.Text = tostring(math.random(0, 45))
-	rotZMaxBox.Text = tostring(math.random(45, 90))
+	C.scaleMinBox.Text = string.format("%.2f", randFloat(0.5, 1.0))
+	C.scaleMaxBox.Text = string.format("%.2f", randFloat(1.1, 2.5))
+	C.rotXMinBox.Text = tostring(math.random(0, 45))
+	C.rotXMaxBox.Text = tostring(math.random(45, 90))
+	C.rotZMinBox.Text = tostring(math.random(0, 45))
+	C.rotZMaxBox.Text = tostring(math.random(45, 90))
 end
 
 local function addSelectedAssets()
@@ -2265,6 +2533,9 @@ plugin.Unloading:Connect(function()
 	if curvePreviewFolder and curvePreviewFolder.Parent then
 		curvePreviewFolder:Destroy()
 	end
+	if densityPreviewFolder and densityPreviewFolder.Parent then
+		densityPreviewFolder:Destroy()
+	end
 	if linePreviewPart then
 		linePreviewPart:Destroy()
 	end
@@ -2276,7 +2547,7 @@ end)
 Selection.SelectionChanged:Connect(updateFillSelection)
 
 function updatePaletteListUI()
-	for _, v in ipairs(paletteList:GetChildren()) do
+	for _, v in ipairs(C.paletteList:GetChildren()) do
 		if v:IsA("GuiObject") and not v:IsA("UIListLayout") then v:Destroy() end
 	end
 
@@ -2293,7 +2564,7 @@ function updatePaletteListUI()
 		btn.Size = UDim2.new(1, 0, 0, 24)
 		btn.TextXAlignment = Enum.TextXAlignment.Left
 		btn.Font = Enum.Font.SourceSans; btn.TextSize = 14
-		btn.Parent = paletteList
+		btn.Parent = C.paletteList
 
 		if name == selectedPalette then
 			btn.BackgroundColor3 = Color3.fromRGB(80, 180, 255)
@@ -2301,14 +2572,14 @@ function updatePaletteListUI()
 
 		btn.MouseButton1Click:Connect(function()
 			selectedPalette = name
-			paletteNameBox.Text = name
+			C.paletteNameBox.Text = name
 			updatePaletteListUI()
 		end)
 	end
 end
 
 function updatePresetListUI()
-	for _, v in ipairs(presetList:GetChildren()) do
+	for _, v in ipairs(C.presetList:GetChildren()) do
 		if v:IsA("GuiObject") and not v:IsA("UIListLayout") then v:Destroy() end
 	end
 
@@ -2325,7 +2596,7 @@ function updatePresetListUI()
 		btn.Size = UDim2.new(1, 0, 0, 24)
 		btn.TextXAlignment = Enum.TextXAlignment.Left
 		btn.Font = Enum.Font.SourceSans; btn.TextSize = 14
-		btn.Parent = presetList
+		btn.Parent = C.presetList
 
 		if name == selectedPreset then
 			btn.BackgroundColor3 = Color3.fromRGB(80, 180, 255)
@@ -2333,7 +2604,7 @@ function updatePresetListUI()
 
 		btn.MouseButton1Click:Connect(function()
 			selectedPreset = name
-			presetNameBox.Text = name
+			C.presetNameBox.Text = name
 			updatePresetListUI()
 		end)
 	end
@@ -2348,6 +2619,8 @@ updatePresetListUI()
 updatePaletteListUI()
 updateModeButtonsUI()
 updateToggleButtonsUI()
+updateMaskingUI()
+populateMaterialPicker()
 
 local function setMode(newMode)
 	if currentMode == newMode then return end
@@ -2377,70 +2650,70 @@ local function setMode(newMode)
 	updateFillSelection()
 
 	-- Handle visibility of mode-specific controls
-	fillBtn.Visible = (newMode == "Fill")
-	curveActionsFrame.Visible = (newMode == "Curve")
-	radiusRow.Visible = (newMode ~= "Curve" and newMode ~= "Line")
-	densityRow.Visible = (newMode ~= "Curve" and newMode ~= "Line")
+	C.fillBtn.Visible = (newMode == "Fill")
+	C.curveActionsFrame.Visible = (newMode == "Curve")
+	C.radiusRow.Visible = (newMode ~= "Curve" and newMode ~= "Line")
+	C.densityRow.Visible = (newMode ~= "Curve" and newMode ~= "Line")
 end
 
 -- Final UI Connections
-onOffBtn.MouseButton1Click:Connect(toggle)
+C.onOffBtn.MouseButton1Click:Connect(toggle)
 
-for modeName, button in pairs(modeButtons) do
+for modeName, button in pairs(C.modeButtons) do
 	button.MouseButton1Click:Connect(function()
 		setMode(modeName)
 	end)
 end
 
-randomizeBtn.MouseButton1Click:Connect(randomizeSettings)
-addBtn.MouseButton1Click:Connect(addSelectedAssets)
-clearBtn.MouseButton1Click:Connect(clearAssetList)
+C.randomizeBtn.MouseButton1Click:Connect(randomizeSettings)
+C.addBtn.MouseButton1Click:Connect(addSelectedAssets)
+C.clearBtn.MouseButton1Click:Connect(clearAssetList)
 
 -- Curve Buttons
-applyCurveBtn.MouseButton1Click:Connect(paintAlongCurve)
-clearCurveBtn.MouseButton1Click:Connect(clearCurve)
+C.applyCurveBtn.MouseButton1Click:Connect(paintAlongCurve)
+C.clearCurveBtn.MouseButton1Click:Connect(clearCurve)
 
 
 -- Palette Buttons
-savePaletteBtn.MouseButton1Click:Connect(function()
-	saveAssetPalette(paletteNameBox.Text)
+C.savePaletteBtn.MouseButton1Click:Connect(function()
+	saveAssetPalette(C.paletteNameBox.Text)
 end)
 
-loadPaletteBtn.MouseButton1Click:Connect(function()
+C.loadPaletteBtn.MouseButton1Click:Connect(function()
 	if selectedPalette then
 		loadAssetPalette(selectedPalette)
 	end
 end)
 
-deletePaletteBtn.MouseButton1Click:Connect(function()
+C.deletePaletteBtn.MouseButton1Click:Connect(function()
 	if selectedPalette then
 		deleteAssetPalette(selectedPalette)
 	end
 end)
 
 -- Preset Buttons
-savePresetBtn.MouseButton1Click:Connect(function()
-	savePreset(presetNameBox.Text)
+C.savePresetBtn.MouseButton1Click:Connect(function()
+	savePreset(C.presetNameBox.Text)
 end)
 
-loadPresetBtn.MouseButton1Click:Connect(function()
+C.loadPresetBtn.MouseButton1Click:Connect(function()
 	if selectedPreset then
 		loadPreset(selectedPreset)
 	end
 end)
 
-deletePresetBtn.MouseButton1Click:Connect(function()
+C.deletePresetBtn.MouseButton1Click:Connect(function()
 	if selectedPreset then
 		deletePreset(selectedPreset)
 	end
 end)
 
-avoidOverlapBtn.MouseButton1Click:Connect(function()
+C.avoidOverlapBtn.MouseButton1Click:Connect(function()
 	avoidOverlap = not avoidOverlap
 	updateToggleButtonsUI()
 end)
 
-surfaceAngleBtn.MouseButton1Click:Connect(function()
+C.surfaceAngleBtn.MouseButton1Click:Connect(function()
 	if surfaceAngleMode == "Off" then
 		surfaceAngleMode = "Floor"
 	elseif surfaceAngleMode == "Floor" then
@@ -2451,28 +2724,103 @@ surfaceAngleBtn.MouseButton1Click:Connect(function()
 	updateToggleButtonsUI()
 end)
 
-physicsModeBtn.MouseButton1Click:Connect(function()
+C.physicsModeBtn.MouseButton1Click:Connect(function()
 	physicsModeEnabled = not physicsModeEnabled
 	updateToggleButtonsUI()
 end)
 
-physicsSettleTimeBox.FocusLost:Connect(function(enterPressed)
-	local newValue = parseNumber(physicsSettleTimeBox.Text, 1.5)
+C.physicsSettleTimeBox.FocusLost:Connect(function(enterPressed)
+	local newValue = parseNumber(C.physicsSettleTimeBox.Text, 1.5)
 	if newValue < 0.1 then newValue = 0.1 end -- Waktu minimal
 	physicsSettleTime = newValue
-	physicsSettleTimeBox.Text = tostring(newValue)
+	C.physicsSettleTimeBox.Text = tostring(newValue)
 end)
 
-snapToGridBtn.MouseButton1Click:Connect(function()
+C.snapToGridBtn.MouseButton1Click:Connect(function()
 	snapToGridEnabled = not snapToGridEnabled
 	updateToggleButtonsUI()
 end)
 
-gridSizeBox.FocusLost:Connect(function(enterPressed)
-	local newValue = parseNumber(gridSizeBox.Text, 4)
+C.gridSizeBox.FocusLost:Connect(function(enterPressed)
+	local newValue = parseNumber(C.gridSizeBox.Text, 4)
 	if newValue <= 0 then newValue = 1 end -- Ukuran minimal
 	gridSize = newValue
-	gridSizeBox.Text = tostring(newValue)
+	C.gridSizeBox.Text = tostring(newValue)
+end)
+
+C.densityPreviewBtn.MouseButton1Click:Connect(function()
+	densityPreviewEnabled = not densityPreviewEnabled
+	updateToggleButtonsUI()
+end)
+
+C.maskingModeBtn.MouseButton1Click:Connect(function()
+	if maskingMode == "Off" then
+		maskingMode = "Material"
+	elseif maskingMode == "Material" then
+		maskingMode = "Color"
+	elseif maskingMode == "Color" then
+		maskingMode = "Tag"
+	else -- Tag
+		maskingMode = "Off"
+	end
+	maskingValue = nil
+	updateMaskingUI()
+end)
+
+C.pickMaskTargetBtn.MouseButton1Click:Connect(function()
+	local selection = Selection:Get()
+	if #selection > 0 and selection[1]:IsA("BasePart") then
+		local targetPart = selection[1]
+		if maskingMode == "Material" then
+			maskingValue = targetPart.Material
+		elseif maskingMode == "Color" then
+			maskingValue = targetPart.Color
+		elseif maskingMode == "Tag" then
+			local tags = CollectionService:GetTags(targetPart)
+			if #tags > 0 then
+				maskingValue = tags[1]
+			else
+				maskingValue = nil
+			end
+		end
+		updateMaskingUI()
+	end
+end)
+
+local function parseColor(str)
+	local r, g, b = str:match("^(%d+),%s*(%d+),%s*(%d+)$")
+	if r and g and b then
+		local rNum, gNum, bNum = tonumber(r), tonumber(g), tonumber(b)
+		if rNum and gNum and bNum and rNum <= 255 and gNum <= 255 and bNum <= 255 then
+			return Color3.fromRGB(rNum, gNum, bNum)
+		end
+	end
+	return nil
+end
+
+C.maskingTextBox.FocusLost:Connect(function(enterPressed)
+	if not enterPressed then return end
+	local text = C.maskingTextBox.Text
+	if text == "" then
+		maskingValue = nil
+	elseif maskingMode == "Tag" then
+		maskingValue = text
+	elseif maskingMode == "Color" then
+		local color = parseColor(text)
+		if color then
+			maskingValue = color
+		else
+			warn("Brush Tool: Invalid color format. Please use R, G, B (e.g., 255, 128, 0).")
+		end
+	elseif maskingMode == "Material" then
+		local success, materialEnum = pcall(function() return Enum.Material[text] end)
+		if success and materialEnum then
+			maskingValue = materialEnum
+		else
+			warn("Brush Tool: Invalid material name: " .. text)
+		end
+	end
+	updateMaskingUI()
 end)
 
 
@@ -2484,6 +2832,16 @@ end
 previewFolder = Instance.new("Folder")
 previewFolder.Name = "_BrushPreview"
 previewFolder.Parent = workspace
+
+
+-- Initialize Density Preview Folder
+densityPreviewFolder = workspace:FindFirstChild("_DensityPreview")
+if densityPreviewFolder then
+	densityPreviewFolder:Destroy()
+end
+densityPreviewFolder = Instance.new("Folder")
+densityPreviewFolder.Name = "_DensityPreview"
+densityPreviewFolder.Parent = workspace
 
 
 -- Initialize Curve Preview Folder
@@ -2501,8 +2859,8 @@ fillSelectionBox.Color3 = Color3.fromRGB(0, 255, 127) -- Spring Green
 fillSelectionBox.LineThickness = 0.2
 fillSelectionBox.Parent = previewFolder -- Store it here to keep workspace clean
 
-fillBtn.MouseButton1Click:Connect(function()
-	if fillBtn.Active and partToFill then
+C.fillBtn.MouseButton1Click:Connect(function()
+	if C.fillBtn.Active and partToFill then
 		fillArea(partToFill)
 	end
 end)
