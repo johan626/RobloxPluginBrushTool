@@ -353,6 +353,10 @@ do
 	modeSettingsSection.LayoutOrder = 5
 	C.modeSettingsContent = modeSettingsContent -- Store for easy access
 
+	-- Brush Settings Section
+	local brushSettingsContent, brushSettingsSection = createSection("Pengaturan Kuas", mainScrollFrame)
+	brushSettingsSection.LayoutOrder = 3
+
 	local function createControlRow(parent, labelText, defaultValue)
 		local rowFrame = Instance.new("Frame")
 		rowFrame.AutomaticSize = Enum.AutomaticSize.Y
