@@ -44,17 +44,15 @@ local isPainting = false
 local lastPaintPosition = nil
 local lineStartPoint = nil -- For Line tool
 local linePreviewPart = nil -- Visual for line tool
-local curvePoints = {} -- For Curve tool
-local curvePreviewFolder = nil -- Visual for curve tool
-local splinePoints = {} -- For Spline tool
-local splinePreviewFolder = nil -- Visual for spline tool
-local splineFollowPath = false
+local pathPoints = {} -- For Path tool
+local pathPreviewFolder = nil -- Visual for path tool
+local pathFollowPath = false
 local builderPostAsset = nil
 local builderSegmentAsset = nil
 local builderSlotToAssign = nil -- "Post" or "Segment"
 local builderStartPoint = nil
 local builderPreviewFolder = nil
-local splineCloseLoop = false
+local pathCloseLoop = false
 local cableStartPoint = nil -- For Cable tool
 local cablePreviewFolder = nil -- Visual for cable tool
 local createCable -- Forward-declare
@@ -83,9 +81,8 @@ local maskingValue = nil
 local updateAssetUIList -- Forward-declare
 local updateFillSelection -- Forward-declare
 local updateDensityPreview -- Forward-declare
-local clearCurve -- Forward-declare
-local clearSpline -- Forward-declare
-local updateSplinePreview -- Forward-declare
+local clearPath -- Forward-declare
+local updatePathPreview -- Forward-declare
 local updateCablePreview -- Forward-declare
 local clearCable -- Forward-declare
 local catmullRom -- Forward-declare
@@ -93,8 +90,7 @@ local placeAsset -- Forward-declare
 local getRandomWeightedAsset -- Forward-declare
 local getWorkspaceContainer -- Forward-declare
 local parseNumber -- Forward-declare
-local paintAlongSpline -- Forward-declare
-local paintAlongCurve -- Forward-declare
+local paintAlongPath -- Forward-declare
 local persistOffsets -- Forward-declare
 
 --[[
@@ -451,12 +447,11 @@ do
 	mainActionBarPadding.Parent = mainActionBar
 
 	C.modeButtons = {}
-	local modeNames = {"Paint", "Line", "Curve", "Spline", "Fill", "Replace", "Stamp", "Volume", "Erase", "Cable", "Builder"}
+	local modeNames = {"Paint", "Line", "Path", "Fill", "Replace", "Stamp", "Volume", "Erase", "Cable", "Builder"}
 	local modeDisplayNames = {
 		Paint = "Kuas",
 		Line = "Garis",
-		Curve = "Kurva",
-		Spline = "Spline",
+		Path = "Jalur",
 		Fill = "Isi",
 		Replace = "Ganti",
 		Stamp = "Stempel",
@@ -498,33 +493,30 @@ do
 	C.densityBox, C.densityRow = createControlRow(brushSettingsContent, "Density", 10)
 	C.spacingBox, C.spacingRow = createControlRow(brushSettingsContent, "Spacing", 1.5)
 
-	local curveActionsFrame = Instance.new("Frame")
-	curveActionsFrame.Name = "CurveActions"
-	curveActionsFrame.Size = UDim2.new(1, 0, 0, 32)
-	curveActionsFrame.BackgroundTransparency = 1
-	curveActionsFrame.Parent = brushSettingsContent
-	curveActionsFrame.Visible = false -- Sembunyikan secara default
-	local curveActionsLayout = Instance.new("UIListLayout")
-	curveActionsLayout.FillDirection = Enum.FillDirection.Horizontal
-	curveActionsLayout.Padding = UDim.new(0, 8)
-	curveActionsLayout.Parent = curveActionsFrame
-	C.applyCurveBtn = createStyledButton("Terapkan Kurva", curveActionsFrame)
-	C.clearCurveBtn = createStyledButton("Hapus Kurva", curveActionsFrame)
-	C.curveActionsFrame = curveActionsFrame
+	local pathActionsFrame = Instance.new("Frame")
+	pathActionsFrame.Name = "PathActions"
+	pathActionsFrame.AutomaticSize = Enum.AutomaticSize.Y
+	pathActionsFrame.Size = UDim2.new(1, 0, 0, 70)
+	pathActionsFrame.BackgroundTransparency = 1
+	pathActionsFrame.Parent = brushSettingsContent
+	pathActionsFrame.Visible = false -- Sembunyikan secara default
+	local pathActionsLayout = Instance.new("UIListLayout")
+	pathActionsLayout.FillDirection = Enum.FillDirection.Vertical
+	pathActionsLayout.Padding = UDim.new(0, 8)
+	pathActionsLayout.Parent = pathActionsFrame
+	C.pathActionsFrame = pathActionsFrame
 
-	local splineActionsFrame = Instance.new("Frame")
-	splineActionsFrame.Name = "SplineActions"
-	splineActionsFrame.Size = UDim2.new(1, 0, 0, 32)
-	splineActionsFrame.BackgroundTransparency = 1
-	splineActionsFrame.Parent = brushSettingsContent
-	splineActionsFrame.Visible = false -- Sembunyikan secara default
-	local splineActionsLayout = Instance.new("UIListLayout")
-	splineActionsLayout.FillDirection = Enum.FillDirection.Horizontal
-	splineActionsLayout.Padding = UDim.new(0, 8)
-	splineActionsLayout.Parent = splineActionsFrame
-	C.applySplineBtn = createStyledButton("Generate Spline", splineActionsFrame)
-	C.clearSplineBtn = createStyledButton("Clear Spline", splineActionsFrame)
-	C.splineActionsFrame = splineActionsFrame
+	local buttonRow = Instance.new("Frame")
+	buttonRow.Size = UDim2.new(1, 0, 0, 32)
+	buttonRow.BackgroundTransparency = 1
+	buttonRow.Parent = pathActionsFrame
+	local buttonRowLayout = Instance.new("UIListLayout")
+	buttonRowLayout.FillDirection = Enum.FillDirection.Horizontal
+	buttonRowLayout.Padding = UDim.new(0, 8)
+	buttonRowLayout.Parent = buttonRow
+
+	C.applyPathBtn = createStyledButton("Terapkan Jalur", buttonRow)
+	C.clearPathBtn = createStyledButton("Hapus Jalur", buttonRow)
 
 	C.cableSagBox, C.cableSagRow = createControlRow(modeSettingsContent, "Sag (Kendur)", 5)
 	C.cableSegmentsBox, C.cableSegmentsRow = createControlRow(modeSettingsContent, "Segments (Kehalusan)", 10)
@@ -567,13 +559,13 @@ do
 	C.cableMaterialButton = createStyledButton("Plastic", cableMaterialRow)
 	C.cableMaterialButton.Size = UDim2.new(0.6, 0, 1, 0)
 
-	paintAlongSpline = function()
-		if #splinePoints < 2 then return end
+	paintAlongPath = function()
+		if #pathPoints < 2 then return end
 
-		ChangeHistoryService:SetWaypoint("Brush - Before Spline")
+		ChangeHistoryService:SetWaypoint("Brush - Before Path Paint")
 		local container = getWorkspaceContainer()
 		local groupFolder = Instance.new("Folder")
-		groupFolder.Name = "BrushSpline_" .. tostring(math.floor(os.time()))
+		groupFolder.Name = "BrushPath_" .. tostring(math.floor(os.time()))
 		groupFolder.Parent = container
 
 		-- Filter for only active assets
@@ -588,15 +580,15 @@ do
 		if #activeAssets == 0 then
 			warn("Brush Tool: No active assets to paint.")
 			groupFolder:Destroy()
-			clearSpline()
+			clearPath()
 			return
 		end
 
 		local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
 		local distanceSinceLastPaint = 0
 
-		local pointsToDraw = splinePoints
-		if splineCloseLoop and #pointsToDraw > 2 then
+		local pointsToDraw = pathPoints
+		if pathCloseLoop and #pointsToDraw > 2 then
 			pointsToDraw = {pointsToDraw[#pointsToDraw], unpack(pointsToDraw), pointsToDraw[1], pointsToDraw[2]}
 		end
 
@@ -616,45 +608,36 @@ do
 				distanceSinceLastPaint = distanceSinceLastPaint + segmentLength
 
 				if distanceSinceLastPaint >= spacing then
-					-- Place an asset here
 					local assetToPlace = getRandomWeightedAsset(activeAssets)
-
-					-- Raycast down to find the ground normal
 					local rayOrigin = pointOnCurve + Vector3.new(0, 10, 0)
 					local rayDir = Vector3.new(0, -20, 0)
 					local params = RaycastParams.new()
-					params.FilterDescendantsInstances = { previewFolder, container, curvePreviewFolder, splinePreviewFolder }
+					params.FilterDescendantsInstances = { previewFolder, container, pathPreviewFolder }
 					params.FilterType = Enum.RaycastFilterType.Exclude
 					local result = workspace:Raycast(rayOrigin, rayDir, params)
 
 					if result then
-						-- Use the placeAsset function, which handles scale, offsets, etc.
 						local placedAsset = placeAsset(assetToPlace, result.Position, result.Normal)
 
-						if placedAsset and splineFollowPath then
-							-- Calculate the spline alignment rotation
+						if placedAsset and pathFollowPath then
 							local tangent = (catmullRom(p0, p1, p2, p3, t + 0.01) - pointOnCurve).Unit
 							local upVector = result.Normal
 							local rightVector = tangent:Cross(upVector).Unit
-							if rightVector.Magnitude < 0.9 then -- Handle cases where tangent is parallel to upVector
+							if rightVector.Magnitude < 0.9 then
 								rightVector = (tangent + Vector3.new(0.1, 0, 0.1)):Cross(upVector).Unit
 							end
 							local lookVector = upVector:Cross(rightVector).Unit
-							local splineRotation = CFrame.fromMatrix(Vector3.new(), rightVector, upVector, -lookVector)
+							local pathRotation = CFrame.fromMatrix(Vector3.new(), rightVector, upVector, -lookVector)
 
-							-- Combine the spline alignment with the asset's existing random rotation
 							if placedAsset:IsA("Model") and placedAsset.PrimaryPart then
 								local pos = placedAsset:GetPrimaryPartCFrame().Position
-								-- Extract the random X and Z rotations that were applied by placeAsset
 								local _, rotX, _, _, rotZ, _ = (placedAsset:GetPrimaryPartCFrame() - pos):ToEulerAnglesXYZ()
-								-- Create a new CFrame from the spline's rotation, then apply the original random X/Z tilts
-								local finalRot = splineRotation * CFrame.Angles(rotX, 0, rotZ)
+								local finalRot = pathRotation * CFrame.Angles(rotX, 0, rotZ)
 								placedAsset:SetPrimaryPartCFrame(CFrame.new(pos) * finalRot)
-
 							elseif placedAsset:IsA("BasePart") then
 								local pos = placedAsset.CFrame.Position
 								local _, rotX, _, _, rotZ, _ = (placedAsset.CFrame - pos):ToEulerAnglesXYZ()
-								local finalRot = splineRotation * CFrame.Angles(rotX, 0, rotZ)
+								local finalRot = pathRotation * CFrame.Angles(rotX, 0, rotZ)
 								placedAsset.CFrame = CFrame.new(pos) * finalRot
 							end
 						end
@@ -663,7 +646,7 @@ do
 							placedAsset.Parent = groupFolder
 						end
 					end
-					distanceSinceLastPaint = 0 -- Reset distance
+					distanceSinceLastPaint = 0
 				end
 				lastPoint = pointOnCurve
 			end
@@ -673,111 +656,8 @@ do
 			groupFolder:Destroy()
 		end
 
-		ChangeHistoryService:SetWaypoint("Brush - After Spline")
-		clearSpline()
-	end
-
-	paintAlongCurve = function()
-		if #curvePoints < 2 then return end
-
-		ChangeHistoryService:SetWaypoint("Brush - Before Curve")
-		local container = getWorkspaceContainer()
-		local groupFolder = Instance.new("Folder")
-		groupFolder.Name = "BrushCurve_" .. tostring(math.floor(os.time()))
-		groupFolder.Parent = container
-
-		-- Filter for only active assets
-		local allAssets = assetsFolder:GetChildren()
-		local activeAssets = {}
-		for _, asset in ipairs(allAssets) do
-			local isActive = assetOffsets[asset.Name .. "_active"]
-			if isActive == nil then isActive = true end
-			if isActive then table.insert(activeAssets, asset) end
-		end
-
-		if #activeAssets == 0 then
-			warn("Brush Tool: No active assets to paint.")
-			groupFolder:Destroy()
-			clearCurve()
-			return
-		end
-
-		local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
-		local distanceSinceLastPaint = 0
-
-		for i = 1, #curvePoints - 1 do
-			local p1 = curvePoints[i]
-			local p2 = curvePoints[i+1]
-			local p0 = curvePoints[i-1] or (p1 + (p1 - p2))
-			local p3 = curvePoints[i+2] or (p2 + (p2 - p1))
-
-			local lastPoint = p1
-			local segments = 100 -- Use higher resolution for placement
-			for t_step = 1, segments do
-				local t = t_step / segments
-				local pointOnCurve = catmullRom(p0, p1, p2, p3, t)
-
-				local segmentLength = (pointOnCurve - lastPoint).Magnitude
-				distanceSinceLastPaint = distanceSinceLastPaint + segmentLength
-
-				if distanceSinceLastPaint >= spacing then
-					-- Place an asset here
-					local assetToPlace = getRandomWeightedAsset(activeAssets)
-
-					-- Raycast down to find the ground normal
-					local rayOrigin = pointOnCurve + Vector3.new(0, 10, 0)
-					local rayDir = Vector3.new(0, -20, 0)
-					local params = RaycastParams.new()
-					params.FilterDescendantsInstances = { previewFolder, container, curvePreviewFolder }
-					params.FilterType = Enum.RaycastFilterType.Exclude
-					local result = workspace:Raycast(rayOrigin, rayDir, params)
-
-					if result then
-						-- Calculate tangent for rotation
-						local nextPointOnCurve = catmullRom(p0, p1, p2, p3, t + 0.01)
-						local tangent = (nextPointOnCurve - pointOnCurve).Unit
-
-						-- Use the placeAsset function, which handles scale, offsets, etc.
-						local placedAsset = placeAsset(assetToPlace, result.Position, result.Normal)
-						if placedAsset then
-							-- Now, calculate the curve alignment rotation
-							local tangent = (catmullRom(p0, p1, p2, p3, t + 0.01) - pointOnCurve).Unit
-							local upVector = result.Normal
-							local rightVector = tangent:Cross(upVector).Unit
-							if rightVector.Magnitude < 0.9 then -- Handle cases where tangent is parallel to upVector
-								rightVector = (tangent + Vector3.new(0.1, 0, 0.1)):Cross(upVector).Unit
-							end
-							local lookVector = upVector:Cross(rightVector).Unit
-							local curveRotation = CFrame.fromMatrix(Vector3.new(), rightVector, upVector, -lookVector)
-
-							-- Combine the curve alignment with the asset's existing random rotation
-							if placedAsset:IsA("Model") and placedAsset.PrimaryPart then
-								local pos = placedAsset:GetPrimaryPartCFrame().Position
-								local rot = (placedAsset:GetPrimaryPartCFrame() - pos) * curveRotation
-								placedAsset:SetPrimaryPartCFrame(CFrame.new(pos) * rot)
-							elseif placedAsset:IsA("BasePart") then
-								local pos = placedAsset.CFrame.Position
-								local rot = (placedAsset.CFrame - pos) * curveRotation
-								placedAsset.CFrame = CFrame.new(pos) * rot
-							end
-
-							placedAsset.Parent = groupFolder
-						end
-					end
-
-					distanceSinceLastPaint = 0 -- Reset distance
-				end
-
-				lastPoint = pointOnCurve
-			end
-		end
-
-		if #groupFolder:GetChildren() == 0 then
-			groupFolder:Destroy()
-		end
-
-		ChangeHistoryService:SetWaypoint("Brush - After Curve")
-		clearCurve()
+		ChangeHistoryService:SetWaypoint("Brush - After Path Paint")
+		clearPath()
 	end
 
 	C.fillBtn = createStyledButton("Pilih 1 Part untuk Diisi", brushSettingsContent)
@@ -1000,15 +880,8 @@ do
 	densityPreviewContainer.Parent = advancedSettingsContent
 	C.densityPreviewBtn, _ = createToggleRow(densityPreviewContainer, "Pratinjau Kepadatan")
 
-	local splineFollowPathContainer = Instance.new("Frame")
-	splineFollowPathContainer.BackgroundTransparency = 1
-	splineFollowPathContainer.Parent = advancedSettingsContent
-	C.splineFollowPathBtn, _ = createToggleRow(splineFollowPathContainer, "Spline: Follow Path")
-
-	local splineCloseLoopContainer = Instance.new("Frame")
-	splineCloseLoopContainer.BackgroundTransparency = 1
-	splineCloseLoopContainer.Parent = advancedSettingsContent
-	C.splineCloseLoopBtn, _ = createToggleRow(splineCloseLoopContainer, "Spline: Close Loop")
+	C.pathFollowPathBtn, _ = createToggleRow(C.pathActionsFrame, "Jalur: Ikuti Arah")
+	C.pathCloseLoopBtn, _ = createToggleRow(C.pathActionsFrame, "Jalur: Tutup Loop")
 
 	local autoPaintContainer = Instance.new("Frame")
 	autoPaintContainer.BackgroundTransparency = 1
@@ -1156,11 +1029,11 @@ local function updateToggleButtonsUI()
 	C.densityPreviewBtn.Text = densityPreviewEnabled and "Ya" or "Tidak"
 	C.densityPreviewBtn.BackgroundColor3 = densityPreviewEnabled and Theme.Green or Theme.Red
 
-	-- Spline Buttons
-	C.splineFollowPathBtn.Text = splineFollowPath and "Ya" or "Tidak"
-	C.splineFollowPathBtn.BackgroundColor3 = splineFollowPath and Theme.Green or Theme.Red
-	C.splineCloseLoopBtn.Text = splineCloseLoop and "Ya" or "Tidak"
-	C.splineCloseLoopBtn.BackgroundColor3 = splineCloseLoop and Theme.Green or Theme.Red
+	-- Path Toggles
+	C.pathFollowPathBtn.Text = pathFollowPath and "Ya" or "Tidak"
+	C.pathFollowPathBtn.BackgroundColor3 = pathFollowPath and Theme.Green or Theme.Red
+	C.pathCloseLoopBtn.Text = pathCloseLoop and "Ya" or "Tidak"
+	C.pathCloseLoopBtn.BackgroundColor3 = pathCloseLoop and Theme.Green or Theme.Red
 
 	-- Auto Terrain Paint
 	C.autoTerrainPaintBtn.Text = autoTerrainPaint and "Ya" or "Tidak"
@@ -1646,7 +1519,7 @@ local function findSurfacePositionAndNormal()
 	local unitRay = camera:ViewportPointToRay(mouse.X, mouse.Y)
 
 	local params = RaycastParams.new()
-	params.FilterDescendantsInstances = { previewFolder, getWorkspaceContainer(), densityPreviewFolder, curvePreviewFolder, cablePreviewFolder }
+	params.FilterDescendantsInstances = { previewFolder, getWorkspaceContainer(), densityPreviewFolder, pathPreviewFolder, cablePreviewFolder }
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
 
@@ -2379,52 +2252,11 @@ local function replaceAt(center)
 	end
 end
 
-local function updateCurvePreview()
-	curvePreviewFolder:ClearAllChildren()
-
-	if #curvePoints < 2 then return end
-
-	local segments = 10 -- Number of preview parts per curve segment
-
-	for i = 1, #curvePoints - 1 do
-		local p1 = curvePoints[i]
-		local p2 = curvePoints[i+1]
-
-		-- Extrapolate control points for the start and end of the spline
-		local p0 = curvePoints[i-1] or (p1 + (p1 - p2))
-		local p3 = curvePoints[i+2] or (p2 + (p2 - p1))
-
-		local lastPoint = p1
-		for t_step = 1, segments do
-			local t = t_step / segments
-			local pointOnCurve = catmullRom(p0, p1, p2, p3, t)
-
-			local part = Instance.new("Part")
-			part.Anchored = true
-			part.CanCollide = false
-			part.CanQuery = false
-			part.CanTouch = false
-			part.Size = Vector3.new(0.4, 0.4, (pointOnCurve - lastPoint).Magnitude)
-			part.CFrame = CFrame.new(lastPoint, pointOnCurve) * CFrame.new(0, 0, -(pointOnCurve-lastPoint).Magnitude / 2)
-			part.Color = Color3.fromRGB(255, 255, 0) -- Yellow preview
-			part.Material = Enum.Material.Neon
-			part.Parent = curvePreviewFolder
-
-			lastPoint = pointOnCurve
-		end
-	end
-end
-
-clearCurve = function()
-	curvePoints = {}
-	curvePreviewFolder:ClearAllChildren()
-end
-
-updateSplinePreview = function()
-	splinePreviewFolder:ClearAllChildren()
+updatePathPreview = function()
+	pathPreviewFolder:ClearAllChildren()
 
 	-- Draw points
-	for _, point in ipairs(splinePoints) do
+	for _, point in ipairs(pathPoints) do
 		local marker = Instance.new("Part")
 		marker.Shape = Enum.PartType.Ball
 		marker.Size = Vector3.new(0.8, 0.8, 0.8)
@@ -2435,11 +2267,11 @@ updateSplinePreview = function()
 		marker.Color = Theme.Accent
 		marker.Material = Enum.Material.Neon
 		marker.Position = point
-		marker.Parent = splinePreviewFolder
+		marker.Parent = pathPreviewFolder
 	end
 
-	local pointsToDraw = splinePoints
-	if splineCloseLoop and #pointsToDraw > 2 then
+	local pointsToDraw = pathPoints
+	if pathCloseLoop and #pointsToDraw > 2 then
 		pointsToDraw = {pointsToDraw[#pointsToDraw], unpack(pointsToDraw), pointsToDraw[1], pointsToDraw[2]}
 	end
 
@@ -2467,16 +2299,16 @@ updateSplinePreview = function()
 			part.CFrame = CFrame.new(lastPoint, pointOnCurve) * CFrame.new(0, 0, -(pointOnCurve-lastPoint).Magnitude / 2)
 			part.Color = Theme.Blue
 			part.Material = Enum.Material.Neon
-			part.Parent = splinePreviewFolder
+			part.Parent = pathPreviewFolder
 
 			lastPoint = pointOnCurve
 		end
 	end
 end
 
-clearSpline = function()
-	splinePoints = {}
-	splinePreviewFolder:ClearAllChildren()
+clearPath = function()
+	pathPoints = {}
+	pathPreviewFolder:ClearAllChildren()
 end
 
 clearCable = function()
@@ -2771,7 +2603,7 @@ updateDensityPreview = function(center, surfaceNormal)
 			local rayDir = -surfaceNormal * 10
 
 			local params = RaycastParams.new()
-			params.FilterDescendantsInstances = { previewFolder, container, densityPreviewFolder, curvePreviewFolder }
+			params.FilterDescendantsInstances = { previewFolder, container, densityPreviewFolder, pathPreviewFolder }
 			params.FilterType = Enum.RaycastFilterType.Exclude
 			local result = workspace:Raycast(rayOrigin, rayDir, params)
 
@@ -2964,12 +2796,9 @@ local function onDown()
 			builderStartPoint = nil -- Reset for the next build
 			builderPreviewFolder:ClearAllChildren()
 		end
-	elseif currentMode == "Curve" then
-		table.insert(curvePoints, center)
-		updateCurvePreview()
-	elseif currentMode == "Spline" then
-		table.insert(splinePoints, center)
-		updateSplinePreview()
+	elseif currentMode == "Path" then
+		table.insert(pathPoints, center)
+		updatePathPreview()
 	elseif currentMode == "Cable" then
 		if not cableStartPoint then
 			cableStartPoint = center
@@ -3103,7 +2932,7 @@ local function deactivate()
 	isPainting = false -- Reset state on deactivate
 	lastPaintPosition = nil
 	lineStartPoint = nil
-	clearCurve()
+	clearPath()
 	clearCable()
 	mouse = nil
 
@@ -3141,15 +2970,18 @@ toolbarBtn.Click:Connect(function()
 end)
 widget.Enabled = false
 
+-- Initialize SelectionBox for Fill tool
+fillSelectionBox = Instance.new("SelectionBox")
+fillSelectionBox.Color3 = Color3.fromRGB(0, 255, 127) -- Spring Green
+fillSelectionBox.LineThickness = 0.2
+fillSelectionBox.Parent = previewFolder -- Store it here to keep workspace clean
+
 plugin.Unloading:Connect(function()
 	if previewFolder and previewFolder.Parent then
 		previewFolder:Destroy()
 	end
-	if curvePreviewFolder and curvePreviewFolder.Parent then
-		curvePreviewFolder:Destroy()
-	end
-	if splinePreviewFolder and splinePreviewFolder.Parent then
-		splinePreviewFolder:Destroy()
+	if pathPreviewFolder and pathPreviewFolder.Parent then
+		pathPreviewFolder:Destroy()
 	end
 	if densityPreviewFolder and densityPreviewFolder.Parent then
 		densityPreviewFolder:Destroy()
@@ -3190,11 +3022,8 @@ local function setMode(newMode)
 	lineStartPoint = nil -- Reset line tool on mode change
 	if linePreviewPart then linePreviewPart.Parent = nil end
 
-	if newMode ~= "Curve" then
-		clearCurve()
-	end
-	if newMode ~= "Spline" then
-		clearSpline()
+	if newMode ~= "Path" then
+		clearPath()
 	end
 	if newMode ~= "Cable" then
 		clearCable()
@@ -3228,17 +3057,14 @@ local function setMode(newMode)
 	if newMode == "Paint" or newMode == "Fill" or newMode == "Volume" then
 		C.densityRow.Visible = true
 	end
-	if newMode == "Paint" or newMode == "Line" or newMode == "Curve" or newMode == "Spline" then
+	if newMode == "Paint" or newMode == "Line" or newMode == "Path" then
 		C.spacingRow.Visible = true
 	end
 	if newMode == "Fill" then
 		C.fillBtn.Visible = true
 	end
-	if newMode == "Curve" then
-		C.curveActionsFrame.Visible = true
-	end
-	if newMode == "Spline" then
-		C.splineActionsFrame.Visible = true
+	if newMode == "Path" then
+		C.pathActionsFrame.Visible = true
 	end
 	if newMode == "Cable" then
 		C.cableSagRow.Visible = true
@@ -3275,13 +3101,20 @@ C.randomizeBtn.MouseButton1Click:Connect(randomizeSettings)
 C.addBtn.MouseButton1Click:Connect(addSelectedAssets)
 C.clearBtn.MouseButton1Click:Connect(clearAssetList)
 
--- Curve Buttons
-C.applyCurveBtn.MouseButton1Click:Connect(paintAlongCurve)
-C.clearCurveBtn.MouseButton1Click:Connect(clearCurve)
+-- Path Buttons
+C.applyPathBtn.MouseButton1Click:Connect(paintAlongPath)
+C.clearPathBtn.MouseButton1Click:Connect(clearPath)
 
--- Spline Buttons
-C.applySplineBtn.MouseButton1Click:Connect(paintAlongSpline)
-C.clearSplineBtn.MouseButton1Click:Connect(clearSpline)
+C.pathFollowPathBtn.MouseButton1Click:Connect(function()
+	pathFollowPath = not pathFollowPath
+	updateToggleButtonsUI()
+end)
+
+C.pathCloseLoopBtn.MouseButton1Click:Connect(function()
+	pathCloseLoop = not pathCloseLoop
+	updatePathPreview()
+	updateToggleButtonsUI()
+end)
 
 C.avoidOverlapBtn.MouseButton1Click:Connect(function()
 	avoidOverlap = not avoidOverlap
@@ -3325,17 +3158,6 @@ end)
 
 C.densityPreviewBtn.MouseButton1Click:Connect(function()
 	densityPreviewEnabled = not densityPreviewEnabled
-	updateToggleButtonsUI()
-end)
-
-C.splineFollowPathBtn.MouseButton1Click:Connect(function()
-	splineFollowPath = not splineFollowPath
-	updateToggleButtonsUI()
-end)
-
-C.splineCloseLoopBtn.MouseButton1Click:Connect(function()
-	splineCloseLoop = not splineCloseLoop
-	updateSplinePreview() -- Redraw preview to show the loop
 	updateToggleButtonsUI()
 end)
 
@@ -3445,22 +3267,14 @@ densityPreviewFolder.Parent = workspace
 
 
 -- Initialize Curve Preview Folder
-curvePreviewFolder = workspace:FindFirstChild("_CurvePreview")
-if curvePreviewFolder then
-	curvePreviewFolder:Destroy()
+-- Initialize Path Preview Folder
+pathPreviewFolder = workspace:FindFirstChild("_PathPreview")
+if pathPreviewFolder then
+	pathPreviewFolder:Destroy()
 end
-curvePreviewFolder = Instance.new("Folder")
-curvePreviewFolder.Name = "_CurvePreview"
-curvePreviewFolder.Parent = workspace
-
--- Initialize Spline Preview Folder
-splinePreviewFolder = workspace:FindFirstChild("_SplinePreview")
-if splinePreviewFolder then
-	splinePreviewFolder:Destroy()
-end
-splinePreviewFolder = Instance.new("Folder")
-splinePreviewFolder.Name = "_SplinePreview"
-splinePreviewFolder.Parent = workspace
+pathPreviewFolder = Instance.new("Folder")
+pathPreviewFolder.Name = "_PathPreview"
+pathPreviewFolder.Parent = workspace
 
 -- Initialize Cable Preview Folder
 cablePreviewFolder = workspace:FindFirstChild("_CablePreview")
@@ -3479,12 +3293,6 @@ end
 builderPreviewFolder = Instance.new("Folder")
 builderPreviewFolder.Name = "_BuilderPreview"
 builderPreviewFolder.Parent = workspace
-
--- Initialize SelectionBox for Fill tool
-fillSelectionBox = Instance.new("SelectionBox")
-fillSelectionBox.Color3 = Color3.fromRGB(0, 255, 127) -- Spring Green
-fillSelectionBox.LineThickness = 0.2
-fillSelectionBox.Parent = previewFolder -- Store it here to keep workspace clean
 
 C.fillBtn.MouseButton1Click:Connect(function()
 	if C.fillBtn.Active and partToFill then
