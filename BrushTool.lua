@@ -1,16 +1,11 @@
 --[[
-	Brush Tool Plugin for Roblox Studio
+	Brush Tool Plugin for Roblox Studio - "Cyber-Industrial" Edition (V8)
 	
-	Allows developers to "paint" assets onto surfaces in the workspace.
 	Features:
-	- 3D Brush: Paint on any surface (floors, walls, ceilings).
-	- Asset Management: Add models/parts from workspace to a persistent asset list.
-	- Customizable Brush: Control radius, density, scale, rotation (X, Y, Z), and spacing.
-	- Per-Asset Settings: Adjust Y-offset and surface alignment for each asset.
-	- Eraser Mode: Erase previously painted objects, with an optional filter for specific assets.
-	- Brush Stroke Mode: Paint continuously by holding and dragging the mouse.
-	- Randomize Settings: Quickly generate new brush variations.
-	- Avoid Overlap: Prevent painting on top of already-created objects.
+	- Complete UI Overhaul: Tabbed Interface, Dark/Industrial Theme.
+	- Robust Logic Restored: Physics, Path Splines, Volume Painting, Masking.
+	- Enhanced UX: Hover states, clear active indicators, organized settings.
+	- Fully Interactive: All buttons and inputs connected with persistence.
 ]]
 
 local RunService = game:GetService("RunService")
@@ -23,7 +18,7 @@ local CollectionService = game:GetService("CollectionService")
 -- Constants
 local ASSET_FOLDER_NAME = "BrushToolAssets"
 local WORKSPACE_FOLDER_NAME = "BrushToolCreations"
-local SETTINGS_KEY = "BrushToolAssetOffsets_v2"
+local SETTINGS_KEY = "BrushToolAssetOffsets_v5"
 
 -- Ensure assets folder exists
 local assetsFolder = ServerStorage:FindFirstChild(ASSET_FOLDER_NAME)
@@ -35,1130 +30,636 @@ end
 
 -- State Variables
 local assetOffsets = {}
-local currentMode = "Paint" -- "Paint", "Line", or "Erase"
+local currentMode = "Paint"
 local active = false
 local mouse = nil
 local moveConn, downConn, upConn
-local previewPart, cyl -- Will be created on activate
+local previewPart, cyl
 local isPainting = false
 local lastPaintPosition = nil
-local lineStartPoint = nil -- For Line tool
-local linePreviewPart = nil -- Visual for line tool
-local pathPoints = {} -- For Path tool
-local pathPreviewFolder = nil -- Visual for path tool
+local lineStartPoint = nil
+local linePreviewPart = nil
+local pathPoints = {}
+local pathPreviewFolder = nil
 local pathFollowPath = false
 local builderPostAsset = nil
 local builderSegmentAsset = nil
-local builderSlotToAssign = nil -- "Post" or "Segment"
+local builderSlotToAssign = nil
 local builderStartPoint = nil
 local builderPreviewFolder = nil
 local pathCloseLoop = false
-local cableStartPoint = nil -- For Cable tool
-local cablePreviewFolder = nil -- Visual for cable tool
-local createCable -- Forward-declare
+local cableStartPoint = nil
+local cablePreviewFolder = nil
 local cableColor = Color3.fromRGB(50, 50, 50)
 local cableMaterial = Enum.Material.Plastic
-local partToFill = nil -- For Fill tool
-local fillSelectionBox = nil -- Visual for Fill tool
-local sourceAsset = nil -- For Replace tool
-local physicsModeEnabled = false
-local physicsSettleTime = 1.5
-local targetAsset = nil -- For Replace tool
-local eraseFilter = {} -- Set of asset names to filter for when erasing
+local partToFill = nil
+local fillSelectionBox = nil
+local sourceAsset = nil
+local targetAsset = nil
+local eraseFilter = {}
 local selectedAssetInUI = nil
 local avoidOverlap = false
 local previewFolder = nil
 local densityPreviewFolder = nil
-local surfaceAngleMode = "Off" -- "Off", "Floor", "Wall"
+local surfaceAngleMode = "Off"
 local snapToGridEnabled = false
 local gridSize = 4
 local densityPreviewEnabled = true
 local autoTerrainPaint = false
 local terrainUndoStack = {}
-local maskingMode = "Off" -- Off, Material, Color, Tag
+local maskingMode = "Off"
 local maskingValue = nil
+local physicsModeEnabled = false
+local physicsSettleTime = 1.5
 
-local updateAssetUIList -- Forward-declare
-local updateFillSelection -- Forward-declare
-local updateDensityPreview -- Forward-declare
-local clearPath -- Forward-declare
-local updatePathPreview -- Forward-declare
-local updateCablePreview -- Forward-declare
-local clearCable -- Forward-declare
-local catmullRom -- Forward-declare
-local placeAsset -- Forward-declare
-local getRandomWeightedAsset -- Forward-declare
-local getWorkspaceContainer -- Forward-declare
-local parseNumber -- Forward-declare
-local paintAlongPath -- Forward-declare
-local persistOffsets -- Forward-declare
+-- Forward Declarations
+local updateAssetUIList
+local updateFillSelection = nil
+local updateDensityPreview
+local clearPath
+local updatePathPreview
+local updateCablePreview
+local clearCable
+local catmullRom
+local placeAsset
+local getRandomWeightedAsset
+local getWorkspaceContainer
+local parseNumber
+local paintAlongPath
+local persistOffsets
+local loadOffsets
+local updateBuilderPreview
+local updatePreview
+local createCable
+local paintAt
+local scaleModel
+local randomizeProperties
+local findSurfacePositionAndNormal
+local paintTerrainUnderAsset
+local anchorPhysicsGroup
+local paintInVolume
+local stampAt
+local eraseAt
+local paintAlongLine
+local fillArea
+local replaceAt
+local calculateCatenary
+local createBuilderStructure
+local trim
+local activate
+local deactivate
+local setMode
+local updateModeButtonsUI
+local updateAllToggles
+local addSelectedAssets
+local clearAssetList
+local updateMaskingUI
+local randomPointInCircle
 
 --[[
-    UI Revamp: "Eco-Digital" Theme & Helper Functions
+    VISUAL THEME: CYBER-INDUSTRIAL
 ]]
 local Theme = {
-	Background = Color3.fromHex("282c34"),
-	Section = Color3.fromHex("3a3f4b"),
-	Accent = Color3.fromHex("20c997"),
-	Text = Color3.fromHex("F0F0F0"),
-	TextDisabled = Color3.fromHex("a0a0a0"),
-	Border = Color3.fromHex("20232a"),
-	Red = Color3.fromHex("e06c75"),
-	Green = Color3.fromHex("98c379"),
-	Blue = Color3.fromHex("61afef"),
+	Background = Color3.fromHex("121214"),
+	Panel = Color3.fromHex("1E1E24"),
+	Border = Color3.fromHex("383842"),
+	BorderActive = Color3.fromHex("00A8FF"),
+	Text = Color3.fromHex("E0E0E0"),
+	TextDim = Color3.fromHex("808080"),
+	Accent = Color3.fromHex("00A8FF"),
+	AccentHover = Color3.fromHex("33BFFF"),
+	Warning = Color3.fromHex("FFB302"),
+	Destructive = Color3.fromHex("FF2A6D"),
+	Success = Color3.fromHex("05FFA1"),
+	FontMain = Enum.Font.GothamMedium,
+	FontHeader = Enum.Font.GothamBold,
+	FontTech = Enum.Font.Code,
 }
 
-local allSections = {}
+-- UI Components Storage
+local C = {}
+local allTabs = {}
 
-local function createSection(title, parent)
-	local sectionFrame = Instance.new("Frame")
-	sectionFrame.Name = title .. "Section"
-	sectionFrame.Size = UDim2.new(1, 0, 0, 32) -- Start with header height
-	sectionFrame.AutomaticSize = Enum.AutomaticSize.Y
-	sectionFrame.BackgroundColor3 = Theme.Section
-	sectionFrame.BorderSizePixel = 0
-	sectionFrame.Parent = parent
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 4)
-	corner.Parent = sectionFrame
-
-	local header = Instance.new("TextButton")
-	header.Name = "Header"
-	header.Size = UDim2.new(1, 0, 0, 32)
-	header.BackgroundColor3 = Theme.Section
-	header.BorderSizePixel = 0
-	header.Text = "  ▼ " .. title
-	header.TextColor3 = Theme.Text
-	header.Font = Enum.Font.SourceSansBold
-	header.TextSize = 16
-	header.TextXAlignment = Enum.TextXAlignment.Left
-	header.Parent = sectionFrame
-	header.ZIndex = 2
-
-	local headerCorner = Instance.new("UICorner")
-	headerCorner.CornerRadius = UDim.new(0, 4)
-	headerCorner.Parent = header
-
-	local contentFrame = Instance.new("Frame")
-	contentFrame.Name = "Content"
-	contentFrame.Size = UDim2.new(1, 0, 1, -32)
-	contentFrame.Position = UDim2.new(0, 0, 0, 32)
-	contentFrame.BackgroundTransparency = 1
-	contentFrame.BorderSizePixel = 0
-	contentFrame.ClipsDescendants = true
-	contentFrame.Parent = sectionFrame
-	contentFrame.Visible = true -- Default to open
-
-	local contentLayout = Instance.new("UIListLayout")
-	contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	contentLayout.Padding = UDim.new(0, 8)
-	contentLayout.Parent = contentFrame
-
-	local contentPadding = Instance.new("UIPadding")
-	contentPadding.PaddingTop = UDim.new(0, 8)
-	contentPadding.PaddingBottom = UDim.new(0, 8)
-	contentPadding.PaddingLeft = UDim.new(0, 8)
-	contentPadding.PaddingRight = UDim.new(0, 8)
-	contentPadding.Parent = contentFrame
-
-	local function setOpen(isOpen)
-		contentFrame.Visible = isOpen
-		if isOpen then
-			header.Text = "  ▼ " .. title
-		else
-			header.Text = "  ▶ " .. title
-		end
-	end
-
-	header.MouseButton1Click:Connect(function()
-		local currentlyOpen = contentFrame.Visible
-		-- Tutup semua section
-		for _, section in ipairs(allSections) do
-			section.setOpen(false)
-		end
-		-- Buka section ini jika sebelumnya tertutup
-		setOpen(not currentlyOpen)
-	end)
-
-	local sectionController = {
-		frame = sectionFrame,
-		setOpen = setOpen,
-	}
-	table.insert(allSections, sectionController)
-
-	return contentFrame, sectionFrame
-end
-
-local function createStyledButton(text, parent)
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, 0, 0, 28)
-	btn.Text = text
-	btn.Font = Enum.Font.SourceSansBold
-	btn.TextSize = 14
-	btn.TextColor3 = Theme.Text
-	btn.BackgroundColor3 = Theme.Accent
-	btn.Parent = parent
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 4)
-	corner.Parent = btn
-
-	return btn
-end
-
-local function createStyledTextBox(defaultText, parent)
-	local tb = Instance.new("TextBox")
-	tb.Size = UDim2.new(0.5, 0, 0, 28)
-	tb.Text = tostring(defaultText)
-	tb.ClearTextOnFocus = false
-	tb.Font = Enum.Font.SourceSans
-	tb.TextSize = 14
-	tb.TextColor3 = Theme.Text
-	tb.BackgroundColor3 = Theme.Background
-	tb.Parent = parent
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 4)
-	corner.Parent = tb
+-- UI Helper Functions
+local function createTechFrame(parent, size)
+	local f = Instance.new("Frame")
+	f.Size = size
+	f.BackgroundColor3 = Theme.Panel
+	f.BorderSizePixel = 0
+	f.Parent = parent
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Theme.Border
-	stroke.Thickness = 1.5
-	stroke.Parent = tb
-
-	return tb
+	stroke.Thickness = 1
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = f
+	return f, stroke
 end
 
-local function createStyledLabel(text, parent)
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(0.5, -8, 0, 28)
-	lbl.BackgroundTransparency = 1
-	lbl.Text = text
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.Font = Enum.Font.SourceSans
-	lbl.TextSize = 14
-	lbl.TextColor3 = Theme.Text
-	lbl.Parent = parent
-	return lbl
+local function createTechButton(text, parent)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 32)
+	btn.BackgroundColor3 = Theme.Panel
+	btn.Text = text
+	btn.TextColor3 = Theme.Text
+	btn.Font = Theme.FontMain
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.Parent = parent
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Theme.Border
+	stroke.Thickness = 1
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = btn
+
+	btn.MouseEnter:Connect(function()
+		stroke.Color = Theme.Accent
+		btn.TextColor3 = Theme.Accent
+	end)
+	btn.MouseLeave:Connect(function()
+		stroke.Color = Theme.Border
+		btn.TextColor3 = Theme.Text
+	end)
+	return btn, stroke
 end
 
+local function createTechToggle(text, parent)
+	local container = Instance.new("Frame")
+	container.BackgroundTransparency = 1
+	container.Size = UDim2.new(1, 0, 0, 32)
+	container.Parent = parent
 
--- UI Creation
-local toolbar = plugin:CreateToolbar("Brush Tool")
-local toolbarBtn = toolbar:CreateButton("Brush", "Toggle Brush Mode (toolbar)", "")
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0, 24, 0, 24)
+	btn.Position = UDim2.new(0, 0, 0.5, -12)
+	btn.BackgroundColor3 = Theme.Background
+	btn.Text = ""
+	btn.Parent = container
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Theme.Border
+	stroke.Thickness = 1
+	stroke.Parent = btn
+
+	local inner = Instance.new("Frame")
+	inner.Size = UDim2.new(1, -6, 1, -6)
+	inner.Position = UDim2.new(0, 3, 0, 3)
+	inner.BackgroundColor3 = Theme.Accent
+	inner.BorderSizePixel = 0
+	inner.Visible = false
+	inner.Parent = btn
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -32, 1, 0)
+	label.Position = UDim2.new(0, 32, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.Font = Theme.FontMain
+	label.TextSize = 13
+	label.TextColor3 = Theme.Text
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = container
+
+	return btn, inner, label
+end
+
+local function createTechInput(labelText, defaultValue, parent)
+	local container = Instance.new("Frame")
+	container.BackgroundTransparency = 1
+	container.Size = UDim2.new(1, 0, 0, 40)
+	container.Parent = parent
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 0, 16)
+	label.BackgroundTransparency = 1
+	label.Text = labelText
+	label.Font = Theme.FontMain
+	label.TextSize = 12
+	label.TextColor3 = Theme.TextDim
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = container
+
+	local inputBox = Instance.new("TextBox")
+	inputBox.Size = UDim2.new(1, 0, 0, 22)
+	inputBox.Position = UDim2.new(0, 0, 0, 18)
+	inputBox.BackgroundColor3 = Theme.Background
+	inputBox.Text = tostring(defaultValue)
+	inputBox.TextColor3 = Theme.Accent
+	inputBox.Font = Theme.FontTech
+	inputBox.TextSize = 14
+	inputBox.TextXAlignment = Enum.TextXAlignment.Left
+	inputBox.Parent = container
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0, 6)
+	padding.Parent = inputBox
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Theme.Border
+	stroke.Parent = inputBox
+
+	inputBox.Focused:Connect(function() stroke.Color = Theme.Accent end)
+	inputBox.FocusLost:Connect(function() stroke.Color = Theme.Border end)
+
+	return inputBox, container
+end
+
+local function createSectionHeader(text, parent)
+	local h = Instance.new("TextLabel")
+	h.Size = UDim2.new(1, 0, 0, 24)
+	h.BackgroundTransparency = 1
+	h.Text = "// " .. string.upper(text)
+	h.Font = Theme.FontTech
+	h.TextSize = 12
+	h.TextColor3 = Theme.Warning
+	h.TextXAlignment = Enum.TextXAlignment.Left
+	h.Parent = parent
+	return h
+end
+
+-- Main Widget Setup
+local toolbar = plugin:CreateToolbar("Brush Tool V8")
+local toolbarBtn = toolbar:CreateButton("Brush", "Open Brush Tool", "rbxassetid://1507949203")
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
 	Enum.InitialDockState.Float,
-	false, -- Enabled
-	false, -- Floating
-	380, -- Width
-	550, -- Height
-	300, -- MinWidth
-	200 -- MinHeight
+	false, false, 400, 650, 350, 400
 )
-local widget = plugin:CreateDockWidgetPluginGui("BrushToolWidget", widgetInfo)
-widget.Title = "Brush Tool"
-widget.Enabled = false -- show UI on load
+local widget = plugin:CreateDockWidgetPluginGui("BrushToolWidgetV8", widgetInfo)
+widget.Title = "BRUSH TOOL // PROTOCOL"
 
--- Build UI inside widget
-local C = {}
+local uiRoot = Instance.new("Frame")
+uiRoot.Size = UDim2.new(1, 0, 1, 0)
+uiRoot.BackgroundColor3 = Theme.Background
+uiRoot.Parent = widget
 
-do
-	local ui = Instance.new("Frame")
-	ui.Size = UDim2.new(1, 0, 1, 0)
-	ui.BackgroundTransparency = 1
-	ui.Parent = widget
+-- Top Bar
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 40)
+topBar.BackgroundColor3 = Theme.Panel
+topBar.BorderSizePixel = 0
+topBar.Parent = uiRoot
 
-	local function createAssetSlot(parent, labelText)
-		local slotFrame = Instance.new("TextButton")
-		slotFrame.Text = ""
-		slotFrame.Size = UDim2.new(1, 0, 0, 60)
-		slotFrame.BackgroundColor3 = Theme.Background
-		slotFrame.Parent = parent
-		local layout = Instance.new("UIListLayout")
-		layout.Padding = UDim.new(0, 4)
-		layout.Parent = slotFrame
-		local padding = Instance.new("UIPadding")
-		padding.PaddingLeft = UDim.new(0, 8)
-		padding.PaddingRight = UDim.new(0, 8)
-		padding.PaddingTop = UDim.new(0, 8)
-		padding.PaddingBottom = UDim.new(0, 8)
-		padding.Parent = slotFrame
-		local stroke = Instance.new("UIStroke")
-		stroke.Color = Theme.Border
-		stroke.Thickness = 1.5
-		stroke.Parent = slotFrame
-		local title = createStyledLabel(labelText, slotFrame)
-		title.Size = UDim2.new(1, 0, 0, 16)
-		title.Font = Enum.Font.SourceSansBold
-		local assetNameLabel = createStyledLabel("Kosong", slotFrame)
-		assetNameLabel.Size = UDim2.new(1, 0, 0, 20)
-		assetNameLabel.BackgroundColor3 = Theme.Section
-		assetNameLabel.TextXAlignment = Enum.TextXAlignment.Center
-		Instance.new("UICorner", assetNameLabel).CornerRadius = UDim.new(0, 4)
-		return slotFrame, assetNameLabel
-	end
+local statusIndicator = Instance.new("Frame")
+statusIndicator.Size = UDim2.new(0, 8, 0, 8)
+statusIndicator.Position = UDim2.new(0, 12, 0.5, -4)
+statusIndicator.BackgroundColor3 = Theme.Destructive
+statusIndicator.Parent = topBar
+Instance.new("UICorner", statusIndicator).CornerRadius = UDim.new(1, 0)
 
-	local function createControlRow(parent, labelText, defaultValue)
-		local rowFrame = Instance.new("Frame")
-		rowFrame.AutomaticSize = Enum.AutomaticSize.Y
-		rowFrame.Size = UDim2.new(1, 0, 0, 54)
-		rowFrame.BackgroundTransparency = 1
-		rowFrame.Parent = parent
-		local layout = Instance.new("UIListLayout")
-		layout.FillDirection = Enum.FillDirection.Vertical
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		layout.Padding = UDim.new(0, 2)
-		layout.SortOrder = Enum.SortOrder.LayoutOrder
-		layout.Parent = rowFrame
-		local label = createStyledLabel(labelText, rowFrame)
-		label.Size = UDim2.new(1, 0, 0, 18)
-		label.TextXAlignment = Enum.TextXAlignment.Center
-		label.LayoutOrder = 1
-		local textBox = createStyledTextBox(defaultValue, rowFrame)
-		textBox.Size = UDim2.new(1, 0, 0, 28)
-		textBox.LayoutOrder = 2
-		return textBox, rowFrame
-	end
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -40, 1, 0)
+titleLabel.Position = UDim2.new(0, 28, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "SYSTEM: STANDBY"
+titleLabel.Font = Theme.FontTech
+titleLabel.TextSize = 14
+titleLabel.TextColor3 = Theme.Text
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = topBar
 
-	local function createMinMaxRow(parent, labelText, defaultMin, defaultMax)
-		local rowFrame = Instance.new("Frame")
-		rowFrame.AutomaticSize = Enum.AutomaticSize.Y
-		rowFrame.Size = UDim2.new(1, 0, 0, 54)
-		rowFrame.BackgroundTransparency = 1
-		rowFrame.Parent = parent
-		local verticalLayout = Instance.new("UIListLayout")
-		verticalLayout.FillDirection = Enum.FillDirection.Vertical
-		verticalLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		verticalLayout.Padding = UDim.new(0, 2)
-		verticalLayout.SortOrder = Enum.SortOrder.LayoutOrder
-		verticalLayout.Parent = rowFrame
-		local label = createStyledLabel(labelText, rowFrame)
-		label.Size = UDim2.new(1, 0, 0, 18)
-		label.TextXAlignment = Enum.TextXAlignment.Center
-		label.LayoutOrder = 1
-		local inputsFrame = Instance.new("Frame")
-		inputsFrame.Size = UDim2.new(1, 0, 0, 28)
-		inputsFrame.LayoutOrder = 2
-		inputsFrame.BackgroundTransparency = 1
-		inputsFrame.Parent = rowFrame
-		local horizontalLayout = Instance.new("UIListLayout")
-		horizontalLayout.FillDirection = Enum.FillDirection.Horizontal
-		horizontalLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		horizontalLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-		horizontalLayout.Padding = UDim.new(0, 8)
-		horizontalLayout.Parent = inputsFrame
-		local minBox = createStyledTextBox(defaultMin, inputsFrame)
-		minBox.Size = UDim2.new(0.5, -4, 1, 0)
-		local maxBox = createStyledTextBox(defaultMax, inputsFrame)
-		maxBox.Size = UDim2.new(0.5, -4, 1, 0)
-		return minBox, maxBox, rowFrame
-	end
+C.activationBtn = Instance.new("TextButton")
+C.activationBtn.Size = UDim2.new(0, 100, 0, 24)
+C.activationBtn.AnchorPoint = Vector2.new(1, 0.5)
+C.activationBtn.Position = UDim2.new(1, -12, 0.5, 0)
+C.activationBtn.BackgroundColor3 = Theme.Background
+C.activationBtn.Text = "ACTIVATE"
+C.activationBtn.Font = Theme.FontHeader
+C.activationBtn.TextSize = 11
+C.activationBtn.TextColor3 = Theme.Text
+C.activationBtn.Parent = topBar
+Instance.new("UIStroke", C.activationBtn).Color = Theme.Border
 
-	local function createSettingsControlRow(parent, labelText)
-		local row = Instance.new("Frame")
-		row.Size = UDim2.new(1, 0, 1, 0)
-		row.BackgroundTransparency = 1
-		row.Parent = parent
-		local layout = Instance.new("UIListLayout")
-		layout.FillDirection = Enum.FillDirection.Horizontal
-		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.Padding = UDim.new(0, 4)
-		layout.Parent = row
-		local label = createStyledLabel(labelText, row)
-		label.Size = UDim2.new(0.4, 0, 1, 0)
-		return row, label
-	end
+-- Tabs
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, 0, 0, 36)
+tabBar.Position = UDim2.new(0, 0, 0, 40)
+tabBar.BackgroundColor3 = Theme.Background
+tabBar.BorderSizePixel = 0
+tabBar.Parent = uiRoot
 
-	local function createToggleRow(parent, labelText)
-		local rowFrame = Instance.new("Frame")
-		rowFrame.AutomaticSize = Enum.AutomaticSize.Y
-		rowFrame.Size = UDim2.new(1, 0, 0, 54)
-		rowFrame.BackgroundTransparency = 1
-		rowFrame.Parent = parent
-		local layout = Instance.new("UIListLayout")
-		layout.FillDirection = Enum.FillDirection.Vertical
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		layout.Padding = UDim.new(0, 2)
-		layout.SortOrder = Enum.SortOrder.LayoutOrder
-		layout.Parent = rowFrame
-		local label = createStyledLabel(labelText, rowFrame)
-		label.Size = UDim2.new(1, 0, 0, 18)
-		label.TextXAlignment = Enum.TextXAlignment.Center
-		label.LayoutOrder = 1
-		local btn = createStyledButton("", rowFrame)
-		btn.Size = UDim2.new(1, 0, 0, 28)
-		btn.LayoutOrder = 2
-		return btn, rowFrame
-	end
+local tabBarLayout = Instance.new("UIListLayout")
+tabBarLayout.FillDirection = Enum.FillDirection.Horizontal
+tabBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabBarLayout.Parent = tabBar
 
-	-- Main container setup
-	ui.BackgroundColor3 = Theme.Background
-	local mainScrollFrame = Instance.new("ScrollingFrame")
-	mainScrollFrame.Size = UDim2.new(1, 0, 1, 0)
-	mainScrollFrame.BackgroundColor3 = Theme.Background
-	mainScrollFrame.BorderSizePixel = 0
-	mainScrollFrame.ScrollBarThickness = 6
-	mainScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-	mainScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	mainScrollFrame.Parent = ui
+local tabContent = Instance.new("Frame")
+tabContent.Size = UDim2.new(1, 0, 1, -76)
+tabContent.Position = UDim2.new(0, 0, 0, 76)
+tabContent.BackgroundTransparency = 1
+tabContent.Parent = uiRoot
 
-	local mainLayout = Instance.new("UIListLayout")
-	mainLayout.Padding = UDim.new(0, 8)
-	mainLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	mainLayout.Parent = mainScrollFrame
-
-	local mainPadding = Instance.new("UIPadding")
-	mainPadding.PaddingLeft = UDim.new(0, 8)
-	mainPadding.PaddingRight = UDim.new(0, 8)
-	mainPadding.PaddingTop = UDim.new(0, 8)
-	mainPadding.PaddingBottom = UDim.new(0, 8)
-	mainPadding.Parent = mainScrollFrame
-
-	-- On/Off Toggle Bar
-	local onOffBar = Instance.new("Frame")
-	onOffBar.Name = "OnOffBar"
-	onOffBar.Size = UDim2.new(1, 0, 0, 32)
-	onOffBar.BackgroundTransparency = 1
-	onOffBar.Parent = mainScrollFrame
-	onOffBar.LayoutOrder = 1 -- Explicitly first
-	C.onOffBtn = createStyledButton("Kuas: Mati", onOffBar)
-	C.onOffBtn.BackgroundColor3 = Theme.Red
-
-	-- Main Action Bar
-	local mainActionBar = Instance.new("Frame")
-	mainActionBar.Name = "MainActionBar"
-	mainActionBar.Size = UDim2.new(1, 0, 0, 108) -- Adjusted height for 3 rows
-	mainActionBar.BackgroundTransparency = 1
-	mainActionBar.Parent = mainScrollFrame
-	mainActionBar.LayoutOrder = 2 -- Explicitly second
-	local mainActionBarLayout = Instance.new("UIGridLayout")
-	mainActionBarLayout.CellSize = UDim2.new(0.333, -4, 0.333, -4)
-	mainActionBarLayout.FillDirection = Enum.FillDirection.Horizontal
-	mainActionBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	mainActionBarLayout.Parent = mainActionBar
-
-	local mainActionBarPadding = Instance.new("UIPadding")
-	mainActionBarPadding.PaddingLeft = UDim.new(0, 4)
-	mainActionBarPadding.PaddingRight = UDim.new(0, 4)
-	mainActionBarPadding.PaddingTop = UDim.new(0, 4)
-	mainActionBarPadding.PaddingBottom = UDim.new(0, 4)
-	mainActionBarPadding.Parent = mainActionBar
-
-	C.modeButtons = {}
-	local modeNames = {"Paint", "Line", "Path", "Fill", "Replace", "Stamp", "Volume", "Erase", "Cable", "Builder"}
-	local modeDisplayNames = {
-		Paint = "Kuas",
-		Line = "Garis",
-		Path = "Jalur",
-		Fill = "Isi",
-		Replace = "Ganti",
-		Stamp = "Stempel",
-		Volume = "Volume",
-		Erase = "Penghapus",
-		Cable = "Kabel",
-		Builder = "Pembangun"
-	}
-
-	for _, modeName in ipairs(modeNames) do
-		local btn = createStyledButton(modeDisplayNames[modeName], mainActionBar)
-		C.modeButtons[modeName] = btn
-	end
-
-	-- Mode Settings Section (Contextual)
-	local modeSettingsContent, modeSettingsSection = createSection("Pengaturan Mode", mainScrollFrame)
-	modeSettingsSection.LayoutOrder = 5
-	C.modeSettingsContent = modeSettingsContent -- Store for easy access
-
-	-- Brush Settings Section
-	local brushSettingsContent, brushSettingsSection = createSection("Pengaturan Kuas", mainScrollFrame)
-	brushSettingsSection.LayoutOrder = 3
-
-	-- Builder Settings Section
-	local builderSettingsContent, builderSettingsSection = createSection("Pengaturan Pembangun", mainScrollFrame)
-	builderSettingsSection.LayoutOrder = 4
-	builderSettingsSection.Visible = false -- Sembunyikan secara default
-	C.builderSettingsContent = builderSettingsContent
-	C.builderSettingsSection = builderSettingsSection
-
-	C.builderPostSlot, C.builderPostLabel = createAssetSlot(builderSettingsContent, "Aset Tiang")
-	C.builderSegmentSlot, C.builderSegmentLabel = createAssetSlot(builderSettingsContent, "Aset Segmen")
-
-	C.builderDistanceBox, _ = createControlRow(builderSettingsContent, "Jarak Antar Tiang", 8)
-	C.builderHeightBox, _ = createControlRow(builderSettingsContent, "Tinggi dari Tanah", 0.2)
-	C.builderStretchToggle, _ = createToggleRow(builderSettingsContent, "Regangkan Segmen")
-
-	C.radiusBox, C.radiusRow = createControlRow(brushSettingsContent, "Radius", 10)
-	C.densityBox, C.densityRow = createControlRow(brushSettingsContent, "Density", 10)
-	C.spacingBox, C.spacingRow = createControlRow(brushSettingsContent, "Spacing", 1.5)
-
-	local pathActionsFrame = Instance.new("Frame")
-	pathActionsFrame.Name = "PathActions"
-	pathActionsFrame.AutomaticSize = Enum.AutomaticSize.Y
-	pathActionsFrame.Size = UDim2.new(1, 0, 0, 70)
-	pathActionsFrame.BackgroundTransparency = 1
-	pathActionsFrame.Parent = brushSettingsContent
-	pathActionsFrame.Visible = false -- Sembunyikan secara default
-	local pathActionsLayout = Instance.new("UIListLayout")
-	pathActionsLayout.FillDirection = Enum.FillDirection.Vertical
-	pathActionsLayout.Padding = UDim.new(0, 8)
-	pathActionsLayout.Parent = pathActionsFrame
-	C.pathActionsFrame = pathActionsFrame
-
-	local buttonRow = Instance.new("Frame")
-	buttonRow.Size = UDim2.new(1, 0, 0, 32)
-	buttonRow.BackgroundTransparency = 1
-	buttonRow.Parent = pathActionsFrame
-	local buttonRowLayout = Instance.new("UIListLayout")
-	buttonRowLayout.FillDirection = Enum.FillDirection.Horizontal
-	buttonRowLayout.Padding = UDim.new(0, 8)
-	buttonRowLayout.Parent = buttonRow
-
-	C.applyPathBtn = createStyledButton("Terapkan Jalur", buttonRow)
-	C.clearPathBtn = createStyledButton("Hapus Jalur", buttonRow)
-
-	C.cableSagBox, C.cableSagRow = createControlRow(modeSettingsContent, "Sag (Kendur)", 5)
-	C.cableSegmentsBox, C.cableSegmentsRow = createControlRow(modeSettingsContent, "Segments (Kehalusan)", 10)
-	C.cableThicknessBox, C.cableThicknessRow = createControlRow(modeSettingsContent, "Thickness (Ketebalan)", 0.2)
-
-	-- Color Picker for Cable
-	local cableColorRow = Instance.new("Frame")
-	cableColorRow.AutomaticSize = Enum.AutomaticSize.Y
-	cableColorRow.Size = UDim2.new(1, 0, 0, 28)
-	cableColorRow.BackgroundTransparency = 1
-	cableColorRow.Parent = modeSettingsContent
-	local cableColorLayout = Instance.new("UIListLayout")
-	cableColorLayout.FillDirection = Enum.FillDirection.Horizontal
-	cableColorLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	cableColorLayout.Padding = UDim.new(0, 4)
-	cableColorLayout.Parent = cableColorRow
-	C.cableColorRow = cableColorRow
-
-	local cableColorLabel = createStyledLabel("Warna Kabel:", cableColorRow)
-	cableColorLabel.Size = UDim2.new(0.4, 0, 1, 0)
-	C.cableColorButton = createStyledButton("", cableColorRow)
-	C.cableColorButton.Size = UDim2.new(0.6, 0, 1, 0)
-	C.cableColorButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50) -- Default dark grey
-
-	-- Material Picker for Cable
-	local cableMaterialRow = Instance.new("Frame")
-	cableMaterialRow.AutomaticSize = Enum.AutomaticSize.Y
-	cableMaterialRow.Size = UDim2.new(1, 0, 0, 32)
-	cableMaterialRow.BackgroundTransparency = 1
-	cableMaterialRow.Parent = modeSettingsContent
-	local cableMaterialLayout = Instance.new("UIListLayout")
-	cableMaterialLayout.FillDirection = Enum.FillDirection.Horizontal
-	cableMaterialLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	cableMaterialLayout.Padding = UDim.new(0, 4)
-	cableMaterialLayout.Parent = cableMaterialRow
-	C.cableMaterialRow = cableMaterialRow
-
-	local cableMaterialLabel = createStyledLabel("Material Kabel:", cableMaterialRow)
-	cableMaterialLabel.Size = UDim2.new(0.4, 0, 1, 0)
-	C.cableMaterialButton = createStyledButton("Plastic", cableMaterialRow)
-	C.cableMaterialButton.Size = UDim2.new(0.6, 0, 1, 0)
-
-	paintAlongPath = function()
-		if #pathPoints < 2 then return end
-
-		ChangeHistoryService:SetWaypoint("Brush - Before Path Paint")
-		local container = getWorkspaceContainer()
-		local groupFolder = Instance.new("Folder")
-		groupFolder.Name = "BrushPath_" .. tostring(math.floor(os.time()))
-		groupFolder.Parent = container
-
-		-- Filter for only active assets
-		local allAssets = assetsFolder:GetChildren()
-		local activeAssets = {}
-		for _, asset in ipairs(allAssets) do
-			local isActive = assetOffsets[asset.Name .. "_active"]
-			if isActive == nil then isActive = true end
-			if isActive then table.insert(activeAssets, asset) end
-		end
-
-		if #activeAssets == 0 then
-			warn("Brush Tool: No active assets to paint.")
-			groupFolder:Destroy()
-			clearPath()
-			return
-		end
-
-		local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
-		local distanceSinceLastPaint = 0
-
-		local pointsToDraw = pathPoints
-		if pathCloseLoop and #pointsToDraw > 2 then
-			pointsToDraw = {pointsToDraw[#pointsToDraw], unpack(pointsToDraw), pointsToDraw[1], pointsToDraw[2]}
-		end
-
-		for i = 1, #pointsToDraw - 1 do
-			local p1 = pointsToDraw[i]
-			local p2 = pointsToDraw[i+1]
-			local p0 = pointsToDraw[i-1] or (p1 + (p1 - p2))
-			local p3 = pointsToDraw[i+2] or (p2 + (p2 - p1))
-
-			local lastPoint = p1
-			local segments = 100 -- Use higher resolution for placement
-			for t_step = 1, segments do
-				local t = t_step / segments
-				local pointOnCurve = catmullRom(p0, p1, p2, p3, t)
-
-				local segmentLength = (pointOnCurve - lastPoint).Magnitude
-				distanceSinceLastPaint = distanceSinceLastPaint + segmentLength
-
-				if distanceSinceLastPaint >= spacing then
-					local assetToPlace = getRandomWeightedAsset(activeAssets)
-					local rayOrigin = pointOnCurve + Vector3.new(0, 10, 0)
-					local rayDir = Vector3.new(0, -20, 0)
-					local params = RaycastParams.new()
-					params.FilterDescendantsInstances = { previewFolder, container, pathPreviewFolder }
-					params.FilterType = Enum.RaycastFilterType.Exclude
-					local result = workspace:Raycast(rayOrigin, rayDir, params)
-
-					if result then
-						local placedAsset = placeAsset(assetToPlace, result.Position, result.Normal)
-
-						if placedAsset and pathFollowPath then
-							local tangent = (catmullRom(p0, p1, p2, p3, t + 0.01) - pointOnCurve).Unit
-							local upVector = result.Normal
-							local rightVector = tangent:Cross(upVector).Unit
-							if rightVector.Magnitude < 0.9 then
-								rightVector = (tangent + Vector3.new(0.1, 0, 0.1)):Cross(upVector).Unit
-							end
-							local lookVector = upVector:Cross(rightVector).Unit
-							local pathRotation = CFrame.fromMatrix(Vector3.new(), rightVector, upVector, -lookVector)
-
-							if placedAsset:IsA("Model") and placedAsset.PrimaryPart then
-								local pos = placedAsset:GetPrimaryPartCFrame().Position
-								local _, rotX, _, _, rotZ, _ = (placedAsset:GetPrimaryPartCFrame() - pos):ToEulerAnglesXYZ()
-								local finalRot = pathRotation * CFrame.Angles(rotX, 0, rotZ)
-								placedAsset:SetPrimaryPartCFrame(CFrame.new(pos) * finalRot)
-							elseif placedAsset:IsA("BasePart") then
-								local pos = placedAsset.CFrame.Position
-								local _, rotX, _, _, rotZ, _ = (placedAsset.CFrame - pos):ToEulerAnglesXYZ()
-								local finalRot = pathRotation * CFrame.Angles(rotX, 0, rotZ)
-								placedAsset.CFrame = CFrame.new(pos) * finalRot
-							end
-						end
-
-						if placedAsset then
-							placedAsset.Parent = groupFolder
-						end
-					end
-					distanceSinceLastPaint = 0
-				end
-				lastPoint = pointOnCurve
-			end
-		end
-
-		if #groupFolder:GetChildren() == 0 then
-			groupFolder:Destroy()
-		end
-
-		ChangeHistoryService:SetWaypoint("Brush - After Path Paint")
-		clearPath()
-	end
-
-	C.fillBtn = createStyledButton("Pilih 1 Part untuk Diisi", brushSettingsContent)
-	C.fillBtn.BackgroundColor3 = Theme.Red
-	C.fillBtn.Active = false
-	C.fillBtn.Visible = false -- Sembunyikan secara default
-
-	-- Transform Settings Section
-	local transformSettingsContent, transformSettingsSection = createSection("Pengaturan Transformasi", mainScrollFrame)
-	transformSettingsSection.LayoutOrder = 6
-	C.scaleMinBox, C.scaleMaxBox, _ = createMinMaxRow(transformSettingsContent, "Scale", 0.8, 1.3)
-	C.rotXMinBox, C.rotXMaxBox, _ = createMinMaxRow(transformSettingsContent, "Rotasi X (°)", 0, 0)
-	C.rotZMinBox, C.rotZMaxBox, _ = createMinMaxRow(transformSettingsContent, "Rotasi Z (°)", 0, 0)
-
-	local colorHeader = createStyledLabel("Acak Warna (Rentang H, S, V)", transformSettingsContent)
-	colorHeader.TextXAlignment = Enum.TextXAlignment.Center
-	colorHeader.Size = UDim2.new(1, 0, 0, 20)
-	C.hueMinBox, C.hueMaxBox, _ = createMinMaxRow(transformSettingsContent, "Hue", 0, 0)
-	C.satMinBox, C.satMaxBox, _ = createMinMaxRow(transformSettingsContent, "Saturation", 0, 0)
-	C.valMinBox, C.valMaxBox, _ = createMinMaxRow(transformSettingsContent, "Value", 0, 0)
-	C.transMinBox, C.transMaxBox, _ = createMinMaxRow(transformSettingsContent, "Acak Transparansi", 0, 0)
-
-	C.randomizeBtn = createStyledButton("Acak Pengaturan", transformSettingsContent)
-
-	-- Advanced Settings Section
-	local advancedSettingsContent, advancedSettingsSection = createSection("Pengaturan Lanjutan", mainScrollFrame)
-	advancedSettingsSection.LayoutOrder = 7
-	local advancedLayout = Instance.new("UIGridLayout")
-	advancedLayout.CellSize = UDim2.new(0.5, -4, 0, 60)
-	advancedLayout.FillDirection = Enum.FillDirection.Horizontal
-	advancedLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	advancedLayout.Parent = advancedSettingsContent
-	advancedSettingsContent:FindFirstChild("UIListLayout"):Destroy() -- Hapus list layout lama
-	advancedSettingsSection.AutomaticSize = Enum.AutomaticSize.Y
-
-	-- Asset Management Bar
-	C.assetActionBar = Instance.new("Frame")
-	C.assetActionBar.Name = "AssetActionBar"
-	C.assetActionBar.Size = UDim2.new(1, 0, 0, 32)
-	C.assetActionBar.BackgroundTransparency = 1
-	C.assetActionBar.Parent = mainScrollFrame
-	local assetActionBarLayout = Instance.new("UIListLayout")
-	assetActionBarLayout.FillDirection = Enum.FillDirection.Horizontal
-	assetActionBarLayout.Padding = UDim.new(0, 8)
-	assetActionBarLayout.Parent = C.assetActionBar
-	C.addBtn = createStyledButton("Add Selected", C.assetActionBar)
-	C.clearBtn = createStyledButton("Clear Asset List", C.assetActionBar)
-
-
-	-- Asset List Frame (akan diisi oleh updateAssetUIList)
-	local assetListFrame = Instance.new("ScrollingFrame")
-	assetListFrame.Size = UDim2.new(1, 0, 0, 300)
-	assetListFrame.BackgroundColor3 = Theme.Section
-	assetListFrame.BorderSizePixel = 0
-	assetListFrame.ScrollBarThickness = 6
-	assetListFrame.Parent = mainScrollFrame
-	local gridLayout = Instance.new("UIGridLayout")
-	gridLayout.CellPadding = UDim2.new(0, 8, 0, 8)
-	gridLayout.CellSize = UDim2.new(0.5, -4, 0, 180)
-	gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	gridLayout.Parent = assetListFrame
-	C.assetListFrame = assetListFrame
-
-	-- Panel Pengaturan Aset (muncul saat item grid dipilih)
-	local assetSettingsContent, assetSettingsSection = createSection("Pengaturan Aset Terpilih", mainScrollFrame)
-	assetSettingsSection.Visible = false -- Sembunyikan seluruh section secara default
-	C.assetSettingsPanel = assetSettingsSection -- Store the whole section
-	C.assetSettingsContent = assetSettingsContent -- Store the content frame
-
-	C.assetSettingsName = createStyledLabel("Pilih sebuah aset...", assetSettingsContent)
-	C.assetSettingsName.TextXAlignment = Enum.TextXAlignment.Center
-	C.assetSettingsName.Size = UDim2.new(1, 0, 0, 20)
-	C.assetSettingsName.Font = Enum.Font.SourceSansBold
-
-	local settingsControlsFrame = Instance.new("Frame")
-	settingsControlsFrame.AutomaticSize = Enum.AutomaticSize.Y
-	settingsControlsFrame.Size = UDim2.new(1, 0, 0, 60)
-	settingsControlsFrame.BackgroundTransparency = 1
-	settingsControlsFrame.Parent = assetSettingsContent
-	local settingsControlsLayout = Instance.new("UIGridLayout")
-	settingsControlsLayout.CellSize = UDim2.new(0.5, -4, 0, 28)
-	settingsControlsLayout.CellPadding = UDim2.new(0, 8, 0, 4)
-	settingsControlsLayout.FillDirection = Enum.FillDirection.Horizontal
-	settingsControlsLayout.Parent = settingsControlsFrame
-
-	local offsetRow, _ = createSettingsControlRow(settingsControlsFrame, "Y-Off:")
-	C.assetSettingsOffsetY = createStyledTextBox("0", offsetRow)
-	C.assetSettingsOffsetY.Size = UDim2.new(0.6, 0, 1, 0)
-
-	local weightRow, _ = createSettingsControlRow(settingsControlsFrame, "Bobot:")
-	C.assetSettingsWeight = createStyledTextBox("1", weightRow)
-	C.assetSettingsWeight.Size = UDim2.new(0.6, 0, 1, 0)
-
-	local alignRow, _ = createSettingsControlRow(settingsControlsFrame, "Selaras:")
-	C.assetSettingsAlign = createStyledButton("Ya", alignRow)
-	C.assetSettingsAlign.Size = UDim2.new(0.6, 0, 1, 0)
-
-	local activeRow, _ = createSettingsControlRow(settingsControlsFrame, "Aktif:")
-	C.assetSettingsActive = createStyledButton("✓", activeRow)
-	C.assetSettingsActive.Size = UDim2.new(0.6, 0, 1, 0)
-
-	local terrainMatRow, _ = createSettingsControlRow(settingsControlsFrame, "Cat Medan:")
-	C.assetSettingsTerrainMaterial = createStyledLabel("Tidak Ada", terrainMatRow)
-	C.assetSettingsTerrainMaterial.Size = UDim2.new(0.6, 0, 1, 0)
-
-	C.assetSettingsPickTerrainBtn = createStyledButton("Ambil Material dari Seleksi", assetSettingsContent)
-	C.assetSettingsPickTerrainBtn.Size = UDim2.new(1, 0, 0, 28)
-
-	persistOffsets = function()
-		local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, assetOffsets)
-		if ok then
-			plugin:SetSetting(SETTINGS_KEY, jsonString)
+local function switchTab(tabName)
+	for _, t in pairs(allTabs) do
+		if t.Name == tabName then
+			t.Button.TextColor3 = Theme.Accent
+			t.Indicator.Visible = true
+			t.Frame.Visible = true
 		else
-			warn("Brush Tool: Gagal menyimpan offset aset! Error:", jsonString)
-		end
-	end
-
-	C.assetSettingsOffsetY.FocusLost:Connect(function(enterPressed)
-		if not selectedAssetInUI then return end
-		local v = parseNumber(C.assetSettingsOffsetY.Text, 0)
-		assetOffsets[selectedAssetInUI] = v
-		C.assetSettingsOffsetY.Text = tostring(v)
-		persistOffsets()
-	end)
-
-	C.assetSettingsWeight.FocusLost:Connect(function(enterPressed)
-		if not selectedAssetInUI then return end
-		local v = math.max(0, parseNumber(C.assetSettingsWeight.Text, 1))
-		assetOffsets[selectedAssetInUI .. "_weight"] = v
-		C.assetSettingsWeight.Text = tostring(v)
-		persistOffsets()
-	end)
-
-	C.assetSettingsAlign.MouseButton1Click:Connect(function()
-		if not selectedAssetInUI then return end
-		local key = selectedAssetInUI .. "_align"
-		assetOffsets[key] = not (assetOffsets[key] or false)
-		persistOffsets()
-		updateAssetSettingsPanel()
-	end)
-
-	C.assetSettingsActive.MouseButton1Click:Connect(function()
-		if not selectedAssetInUI then return end
-		local key = selectedAssetInUI .. "_active"
-		local current = assetOffsets[key] == nil or assetOffsets[key]
-		assetOffsets[key] = not current
-		persistOffsets()
-		updateAssetSettingsPanel()
-	end)
-
-	C.assetSettingsPickTerrainBtn.MouseButton1Click:Connect(function()
-		if not selectedAssetInUI or not mouse then return end
-
-		local unitRay = workspace.CurrentCamera:ViewportPointToRay(mouse.X, mouse.Y)
-		local params = RaycastParams.new()
-		params.FilterType = Enum.RaycastFilterType.Include
-		params.FilterDescendantsInstances = { workspace.Terrain }
-
-		local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
-
-		if result and result.Instance:IsA("Terrain") then
-			local material = result.Material
-			assetOffsets[selectedAssetInUI .. "_terrainMaterial"] = material.Name
-			persistOffsets()
-			updateAssetSettingsPanel()
-		else
-			warn("Brush Tool: Tidak ada medan (Terrain) yang ditemukan di bawah kursor.")
-		end
-	end)
-
-	local avoidOverlapContainer = Instance.new("Frame")
-	avoidOverlapContainer.BackgroundTransparency = 1
-	avoidOverlapContainer.Parent = advancedSettingsContent
-	C.avoidOverlapBtn, _ = createToggleRow(avoidOverlapContainer, "Hindari Tumpang Tindih")
-
-	local surfaceAngleContainer = Instance.new("Frame")
-	surfaceAngleContainer.BackgroundTransparency = 1
-	surfaceAngleContainer.Parent = advancedSettingsContent
-	C.surfaceAngleBtn, _ = createToggleRow(surfaceAngleContainer, "Kunci Permukaan")
-
-	local physicsModeContainer = Instance.new("Frame")
-	physicsModeContainer.BackgroundTransparency = 1
-	physicsModeContainer.Parent = advancedSettingsContent
-	C.physicsModeBtn, _ = createToggleRow(physicsModeContainer, "Mode Fisika")
-
-	local physicsSettleTimeContainer = Instance.new("Frame")
-	physicsSettleTimeContainer.BackgroundTransparency = 1
-	physicsSettleTimeContainer.Parent = advancedSettingsContent
-
-	local physicsSettleTimeRow = Instance.new("Frame")
-	physicsSettleTimeRow.Size = UDim2.new(1, 0, 0, 28)
-	physicsSettleTimeRow.BackgroundTransparency = 1
-	physicsSettleTimeRow.Parent = physicsSettleTimeContainer
-	local physicsLayout = Instance.new("UIListLayout")
-	physicsLayout.FillDirection = Enum.FillDirection.Vertical
-	physicsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	physicsLayout.Padding = UDim.new(0, 2)
-	physicsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	physicsLayout.Parent = physicsSettleTimeRow
-	local physicsLabel = createStyledLabel("Waktu Tunggu Fisika", physicsSettleTimeRow)
-	physicsLabel.Size = UDim2.new(1, 0, 0, 18)
-	physicsLabel.TextXAlignment = Enum.TextXAlignment.Center
-	physicsLabel.LayoutOrder = 1
-	C.physicsSettleTimeBox = createStyledTextBox(physicsSettleTime, physicsSettleTimeRow)
-	C.physicsSettleTimeBox.Size = UDim2.new(1, 0, 0, 28)
-	C.physicsSettleTimeBox.LayoutOrder = 2
-
-	local snapToGridContainer = Instance.new("Frame")
-	snapToGridContainer.BackgroundTransparency = 1
-	snapToGridContainer.Parent = advancedSettingsContent
-	C.snapToGridBtn, _ = createToggleRow(snapToGridContainer, "Tempel ke Grid")
-
-	local gridSizeContainer = Instance.new("Frame")
-	gridSizeContainer.BackgroundTransparency = 1
-	gridSizeContainer.Parent = advancedSettingsContent
-
-	local densityPreviewContainer = Instance.new("Frame")
-	densityPreviewContainer.BackgroundTransparency = 1
-	densityPreviewContainer.Parent = advancedSettingsContent
-	C.densityPreviewBtn, _ = createToggleRow(densityPreviewContainer, "Pratinjau Kepadatan")
-
-	C.pathFollowPathBtn, _ = createToggleRow(C.pathActionsFrame, "Jalur: Ikuti Arah")
-	C.pathCloseLoopBtn, _ = createToggleRow(C.pathActionsFrame, "Jalur: Tutup Loop")
-
-	local autoPaintContainer = Instance.new("Frame")
-	autoPaintContainer.BackgroundTransparency = 1
-	autoPaintContainer.Parent = advancedSettingsContent
-	C.autoTerrainPaintBtn, _ = createToggleRow(autoPaintContainer, "Cat Medan Otomatis")
-	C.undoTerrainPaintBtn = createStyledButton("Undo Terrain Paint", autoPaintContainer)
-
-	local maskingContainer = Instance.new("Frame")
-	maskingContainer.BackgroundTransparency = 1
-	maskingContainer.Parent = advancedSettingsContent
-	local maskingBtn, maskingRowFrame = createToggleRow(maskingContainer, "Masking")
-	C.maskingModeBtn = maskingBtn
-	C.maskingModeBtn.Text = "Mode: Off"
-	C.maskingModeBtn.LayoutOrder = 2
-
-	C.maskingTargetLabel = createStyledLabel("Target: None", maskingRowFrame)
-	C.maskingTargetLabel.Size = UDim2.new(1, 0, 0, 18)
-	C.maskingTargetLabel.TextXAlignment = Enum.TextXAlignment.Center
-	C.maskingTargetLabel.LayoutOrder = 3
-
-	C.pickMaskTargetBtn = createStyledButton("Ambil dari Seleksi", maskingRowFrame)
-	C.pickMaskTargetBtn.Size = UDim2.new(1, 0, 0, 28)
-	C.pickMaskTargetBtn.LayoutOrder = 4
-
-	C.maskingInputFrame = Instance.new("Frame")
-	C.maskingInputFrame.AutomaticSize = Enum.AutomaticSize.Y
-	C.maskingInputFrame.BackgroundTransparency = 1
-	C.maskingInputFrame.LayoutOrder = 5
-	C.maskingInputFrame.Parent = maskingRowFrame
-	C.maskingInputFrame.Visible = false -- Hide by default
-
-	local inputLayout = Instance.new("UIListLayout")
-	inputLayout.Parent = C.maskingInputFrame
-	inputLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	inputLayout.Padding = UDim.new(0, 4)
-
-	C.maskingTextBox = createStyledTextBox("", C.maskingInputFrame)
-	C.maskingTextBox.Size = UDim2.new(1, 0, 0, 28)
-	C.maskingTextBox.PlaceholderText = "Enter Tag or R,G,B color..."
-
-	C.materialGridFrame = Instance.new("ScrollingFrame")
-	C.materialGridFrame.Size = UDim2.new(1, 0, 0, 150)
-	C.materialGridFrame.BackgroundColor3 = Theme.Background
-	C.materialGridFrame.BorderSizePixel = 1
-	C.materialGridFrame.BorderColor3 = Theme.Border
-	C.materialGridFrame.ScrollBarThickness = 6
-	C.materialGridFrame.Parent = C.maskingInputFrame
-	C.materialGridFrame.Visible = false
-
-	local gridLayout = Instance.new("UIGridLayout")
-	gridLayout.CellSize = UDim2.new(0, 56, 0, 56)
-	gridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
-	gridLayout.SortOrder = Enum.SortOrder.Name
-	gridLayout.Parent = C.materialGridFrame
-
-	local gridSizeRow = Instance.new("Frame")
-	gridSizeRow.Size = UDim2.new(1, 0, 0, 28)
-	gridSizeRow.BackgroundTransparency = 1
-	gridSizeRow.Parent = gridSizeContainer
-	local gridLayout = Instance.new("UIListLayout")
-	gridLayout.FillDirection = Enum.FillDirection.Vertical
-	gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	gridLayout.Padding = UDim.new(0, 2)
-	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	gridLayout.Parent = gridSizeRow
-	local gridLabel = createStyledLabel("Ukuran Grid", gridSizeRow)
-	gridLabel.Size = UDim2.new(1, 0, 0, 18)
-	gridLabel.TextXAlignment = Enum.TextXAlignment.Center
-	gridLabel.LayoutOrder = 1
-	C.gridSizeBox = createStyledTextBox(gridSize, gridSizeRow)
-	C.gridSizeBox.Size = UDim2.new(1, 0, 0, 28)
-	C.gridSizeBox.LayoutOrder = 2
-
-	C.assetListFrame.LayoutOrder = 3
-	C.assetSettingsPanel.LayoutOrder = 4
-	C.assetActionBar.LayoutOrder = 5
-
-	-- Connect Cable UI Events
-	C.cableColorButton.MouseButton1Click:Connect(function()
-		plugin:ShowColorPicker(cableColor, function(newColor)
-			cableColor = newColor
-			C.cableColorButton.BackgroundColor3 = newColor
-		end)
-	end)
-
-	local materials = Enum.Material:GetEnumItems()
-	local currentMaterialIndex = table.find(materials, Enum.Material.Plastic) or 1
-
-	C.cableMaterialButton.MouseButton1Click:Connect(function()
-		currentMaterialIndex = (currentMaterialIndex % #materials) + 1
-		cableMaterial = materials[currentMaterialIndex]
-		C.cableMaterialButton.Text = cableMaterial.Name
-	end)
-end
-
--- Utility Functions
-local function updateModeButtonsUI()
-	for modeName, button in pairs(C.modeButtons) do
-		if modeName == currentMode then
-			button.BackgroundColor3 = Theme.Accent
-		else
-			button.BackgroundColor3 = Theme.Section
+			t.Button.TextColor3 = Theme.TextDim
+			t.Indicator.Visible = false
+			t.Frame.Visible = false
 		end
 	end
 end
 
-local function updateOnOffButtonUI()
-	if active then
-		C.onOffBtn.Text = "Kuas: Aktif"
-		C.onOffBtn.BackgroundColor3 = Theme.Green
-	else
-		C.onOffBtn.Text = "Kuas: Mati"
-		C.onOffBtn.BackgroundColor3 = Theme.Red
-	end
+local function createTab(name, label)
+	local btn = Instance.new("TextButton")
+	btn.Name = name
+	btn.Size = UDim2.new(0.333, 0, 1, 0)
+	btn.BackgroundTransparency = 1
+	btn.Text = label
+	btn.Font = Theme.FontHeader
+	btn.TextSize = 12
+	btn.TextColor3 = Theme.TextDim
+	btn.Parent = tabBar
+	local indicator = Instance.new("Frame")
+	indicator.Size = UDim2.new(1, -4, 0, 2)
+	indicator.Position = UDim2.new(0, 2, 1, -2)
+	indicator.BackgroundColor3 = Theme.Accent
+	indicator.BorderSizePixel = 0
+	indicator.Visible = false
+	indicator.Parent = btn
+	local frame = Instance.new("ScrollingFrame")
+	frame.Name = name .. "Frame"
+	frame.Size = UDim2.new(1, 0, 1, 0)
+	frame.BackgroundTransparency = 1
+	frame.ScrollBarThickness = 4
+	frame.ScrollBarImageColor3 = Theme.Border
+	frame.Visible = false
+	frame.Parent = tabContent
+	local layout = Instance.new("UIListLayout")
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 12)
+	layout.Parent = frame
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 12)
+	pad.PaddingBottom = UDim.new(0, 12)
+	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingRight = UDim.new(0, 12)
+	pad.Parent = frame
+	btn.MouseButton1Click:Connect(function() switchTab(name) end)
+	table.insert(allTabs, {Name = name, Button = btn, Indicator = indicator, Frame = frame})
+	return {frame = frame}
 end
 
-local function updateToggleButtonsUI()
-	-- Avoid Overlap
-	C.avoidOverlapBtn.Text = avoidOverlap and "Ya" or "Tidak"
-	C.avoidOverlapBtn.BackgroundColor3 = avoidOverlap and Theme.Green or Theme.Red
+local TabTools = createTab("Tools", "OPERATIONS")
+local TabAssets = createTab("Assets", "INVENTORY")
+local TabTuning = createTab("Tuning", "SYSTEM")
 
-	-- Surface Angle
-	if surfaceAngleMode == "Off" then
-		C.surfaceAngleBtn.Text = "Kunci Permukaan: Mati"
-	elseif surfaceAngleMode == "Floor" then
-		C.surfaceAngleBtn.Text = "Kunci Permukaan: Lantai"
-	else -- Pasti "Wall"
-		C.surfaceAngleBtn.Text = "Kunci Permukaan: Dinding"
-	end
+-- Tools Tab
+createSectionHeader("MODE SELECT", TabTools.frame)
+local modeGrid = Instance.new("Frame")
+modeGrid.Size = UDim2.new(1, 0, 0, 100)
+modeGrid.AutomaticSize = Enum.AutomaticSize.Y
+modeGrid.BackgroundTransparency = 1
+modeGrid.Parent = TabTools.frame
+local mgLayout = Instance.new("UIGridLayout")
+mgLayout.CellSize = UDim2.new(0.34, 0, 0, 36)
+mgLayout.CellPadding = UDim2.new(0.03, 0, 0, 8)
+mgLayout.Parent = modeGrid
 
-	-- Physics Mode
-	if physicsModeEnabled then
-		C.physicsModeBtn.Text = "Aktif"
-		C.physicsModeBtn.BackgroundColor3 = Theme.Green
-	else
-		C.physicsModeBtn.Text = "Mati"
-		C.physicsModeBtn.BackgroundColor3 = Theme.Red
-	end
-
-	-- Snap to Grid
-	C.snapToGridBtn.Text = snapToGridEnabled and "Ya" or "Tidak"
-	C.snapToGridBtn.BackgroundColor3 = snapToGridEnabled and Theme.Green or Theme.Red
-
-	-- Density Preview
-	C.densityPreviewBtn.Text = densityPreviewEnabled and "Ya" or "Tidak"
-	C.densityPreviewBtn.BackgroundColor3 = densityPreviewEnabled and Theme.Green or Theme.Red
-
-	-- Path Toggles
-	C.pathFollowPathBtn.Text = pathFollowPath and "Ya" or "Tidak"
-	C.pathFollowPathBtn.BackgroundColor3 = pathFollowPath and Theme.Green or Theme.Red
-	C.pathCloseLoopBtn.Text = pathCloseLoop and "Ya" or "Tidak"
-	C.pathCloseLoopBtn.BackgroundColor3 = pathCloseLoop and Theme.Green or Theme.Red
-
-	-- Auto Terrain Paint
-	C.autoTerrainPaintBtn.Text = autoTerrainPaint and "Ya" or "Tidak"
-	C.autoTerrainPaintBtn.BackgroundColor3 = autoTerrainPaint and Theme.Green or Theme.Red
+C.modeButtons = {}
+local modeNames = {"Paint", "Line", "Path", "Fill", "Replace", "Stamp", "Volume", "Erase", "Cable", "Builder"}
+for _, m in ipairs(modeNames) do
+	local b, s = createTechButton(string.upper(m), modeGrid)
+	b.TextSize = 11
+	C.modeButtons[m] = {Button = b, Stroke = s}
 end
 
-local function updateMaskingUI()
-	C.maskingModeBtn.Text = "Mode: " .. maskingMode
+createSectionHeader("BRUSH PARAMETERS", TabTools.frame)
+local brushParamsContainer = Instance.new("Frame")
+brushParamsContainer.Size = UDim2.new(1, 0, 0, 100)
+brushParamsContainer.AutomaticSize = Enum.AutomaticSize.Y
+brushParamsContainer.BackgroundTransparency = 1
+brushParamsContainer.Parent = TabTools.frame
+local bpLayout = Instance.new("UIGridLayout")
+bpLayout.CellSize = UDim2.new(0.48, 0, 0, 40)
+bpLayout.CellPadding = UDim2.new(0.04, 0, 0, 8)
+bpLayout.Parent = brushParamsContainer
 
-	local isMaskingOn = maskingMode ~= "Off"
-	C.pickMaskTargetBtn.Visible = isMaskingOn
-	C.maskingTargetLabel.Visible = isMaskingOn
-	C.maskingInputFrame.Visible = isMaskingOn
+C.radiusBox = {createTechInput("RADIUS (Studs)", "10", brushParamsContainer)}
+C.densityBox = {createTechInput("DENSITY (Count)", "10", brushParamsContainer)}
+C.spacingBox = {createTechInput("SPACING (Studs)", "1.5", brushParamsContainer)}
 
-	if not isMaskingOn then
-		C.maskingTargetLabel.Text = "Target: None"
-		return
-	end
+C.contextContainer = Instance.new("Frame")
+C.contextContainer.Size = UDim2.new(1, 0, 0, 20)
+C.contextContainer.AutomaticSize = Enum.AutomaticSize.Y
+C.contextContainer.BackgroundTransparency = 1
+C.contextContainer.Parent = TabTools.frame
 
-	C.maskingTextBox.Visible = (maskingMode == "Color" or maskingMode == "Tag")
-	C.materialGridFrame.Visible = (maskingMode == "Material")
+-- Path Context
+C.pathFrame = Instance.new("Frame")
+C.pathFrame.AutomaticSize = Enum.AutomaticSize.Y
+C.pathFrame.Size = UDim2.new(1, 0, 0, 0)
+C.pathFrame.BackgroundTransparency = 1
+C.pathFrame.Visible = false
+C.pathFrame.Parent = C.contextContainer
+Instance.new("UIListLayout", C.pathFrame).Padding = UDim.new(0, 8)
+createSectionHeader("PATH SETTINGS", C.pathFrame)
+local pathBtnGrid = Instance.new("Frame")
+pathBtnGrid.Size = UDim2.new(1, 0, 0, 32)
+pathBtnGrid.BackgroundTransparency = 1
+pathBtnGrid.Parent = C.pathFrame
+local pgl = Instance.new("UIGridLayout")
+pgl.CellSize = UDim2.new(0.48, 0, 0, 32)
+pgl.CellPadding = UDim2.new(0.04, 0, 0, 0)
+pgl.Parent = pathBtnGrid
+C.applyPathBtn = {createTechButton("GENERATE", pathBtnGrid)}
+C.clearPathBtn = {createTechButton("CLEAR", pathBtnGrid)}
+C.clearPathBtn[1].TextColor3 = Theme.Destructive
+C.pathFollowPathBtn = {createTechToggle("Follow Curvature", C.pathFrame)}
+C.pathCloseLoopBtn = {createTechToggle("Close Loop", C.pathFrame)}
 
-	if maskingMode == "Color" then
-		C.maskingTextBox.PlaceholderText = "Enter R,G,B (e.g., 255,0,0)"
-	elseif maskingMode == "Tag" then
-		C.maskingTextBox.PlaceholderText = "Enter Tag name..."
-	end
+-- Builder Context
+C.builderFrame = Instance.new("Frame")
+C.builderFrame.AutomaticSize = Enum.AutomaticSize.Y
+C.builderFrame.Size = UDim2.new(1, 0, 0, 0)
+C.builderFrame.BackgroundTransparency = 1
+C.builderFrame.Visible = false
+C.builderFrame.Parent = C.contextContainer
+Instance.new("UIListLayout", C.builderFrame).Padding = UDim.new(0, 8)
+createSectionHeader("CONSTRUCTION PROTOCOL", C.builderFrame)
+C.builderPostSlot = {createTechButton("ASSIGN POST [NONE]", C.builderFrame)}
+C.builderSegmentSlot = {createTechButton("ASSIGN SEGMENT [NONE]", C.builderFrame)}
+local bGrid = Instance.new("Frame")
+bGrid.Size = UDim2.new(1, 0, 0, 50)
+bGrid.BackgroundTransparency = 1
+bGrid.Parent = C.builderFrame
+Instance.new("UIGridLayout", bGrid).CellSize = UDim2.new(0.48, 0, 0, 40)
+C.builderDistanceBox = {createTechInput("DIST (Studs)", "8", bGrid)}
+C.builderHeightBox = {createTechInput("Y-OFFSET", "0.2", bGrid)}
+C.builderStretchToggle = {createTechToggle("Stretch Segment", C.builderFrame)}
 
-	-- Update selection stroke
-	for _, btn in ipairs(C.materialGridFrame:GetChildren()) do
-		if btn:IsA("ImageButton") then
-			local stroke = btn:FindFirstChildOfClass("UIStroke")
-			if maskingValue and maskingMode == "Material" and btn.Name == maskingValue.Name then
-				stroke.Enabled = true
-				stroke.Color = Theme.Accent
-			else
-				stroke.Enabled = false
-			end
-		end
-	end
+-- Cable Context
+C.cableFrame = Instance.new("Frame")
+C.cableFrame.AutomaticSize = Enum.AutomaticSize.Y
+C.cableFrame.Size = UDim2.new(1, 0, 0, 0)
+C.cableFrame.BackgroundTransparency = 1
+C.cableFrame.Visible = false
+C.cableFrame.Parent = C.contextContainer
+Instance.new("UIListLayout", C.cableFrame).Padding = UDim.new(0, 8)
+createSectionHeader("CABLE PHYSICS", C.cableFrame)
+local cGrid = Instance.new("Frame")
+cGrid.Size = UDim2.new(1, 0, 0, 50)
+cGrid.BackgroundTransparency = 1
+cGrid.Parent = C.cableFrame
+Instance.new("UIGridLayout", cGrid).CellSize = UDim2.new(0.3, 0, 0, 40)
+C.cableSagBox = {createTechInput("SAG", "5", cGrid)}
+C.cableSegmentsBox = {createTechInput("SEGMENTS", "10", cGrid)}
+C.cableThicknessBox = {createTechInput("THICK", "0.2", cGrid)}
+C.cableMaterialButton = {createTechButton("MAT: PLASTIC", C.cableFrame)}
+C.cableColorButton = {createTechButton("COLOR SELECT", C.cableFrame)}
 
-	if maskingValue then
-		if maskingMode == "Color" then
-			local c = maskingValue
-			C.maskingTargetLabel.Text = string.format("Target: %.2f, %.2f, %.2f", c.r, c.g, c.b)
-			C.maskingTextBox.Text = string.format("%d, %d, %d", c.r * 255, c.g * 255, c.b * 255)
-		elseif maskingMode == "Tag" then
-			C.maskingTargetLabel.Text = "Target: " .. tostring(maskingValue)
-			C.maskingTextBox.Text = tostring(maskingValue)
-		elseif maskingMode == "Material" then
-			C.maskingTargetLabel.Text = "Target: " .. maskingValue.Name
-		end
-	else
-		C.maskingTargetLabel.Text = "Target: None"
-		C.maskingTextBox.Text = ""
-	end
-end
+-- Fill Context
+C.fillFrame = Instance.new("Frame")
+C.fillFrame.AutomaticSize = Enum.AutomaticSize.Y
+C.fillFrame.Size = UDim2.new(1, 0, 0, 0)
+C.fillFrame.BackgroundTransparency = 1
+C.fillFrame.Visible = false
+C.fillFrame.Parent = C.contextContainer
+C.fillBtn = {createTechButton("SELECT TARGET VOLUME", C.fillFrame)}
 
-local function trim(s)
+-- Assets Tab
+createSectionHeader("ASSET MANAGEMENT", TabAssets.frame)
+local assetActions = Instance.new("Frame")
+assetActions.Size = UDim2.new(1, 0, 0, 32)
+assetActions.BackgroundTransparency = 1
+assetActions.Parent = TabAssets.frame
+local aal = Instance.new("UIListLayout")
+aal.FillDirection = Enum.FillDirection.Horizontal
+aal.Padding = UDim.new(0, 8)
+aal.Parent = assetActions
+C.addBtn = {createTechButton("+ ADD SELECTED", assetActions)}
+C.addBtn[1].Size = UDim2.new(0.5, -4, 1, 0)
+C.addBtn[1].TextColor3 = Theme.Success
+C.clearBtn = {createTechButton("CLEAR ALL", assetActions)}
+C.clearBtn[1].Size = UDim2.new(0.5, -4, 1, 0)
+C.clearBtn[1].TextColor3 = Theme.Destructive
+
+C.assetListFrame = Instance.new("Frame")
+C.assetListFrame.Size = UDim2.new(1, 0, 0, 200)
+C.assetListFrame.AutomaticSize = Enum.AutomaticSize.Y
+C.assetListFrame.BackgroundTransparency = 1
+C.assetListFrame.Parent = TabAssets.frame
+local alGrid = Instance.new("UIGridLayout")
+alGrid.CellSize = UDim2.new(0.48, 0, 0, 100)
+alGrid.CellPadding = UDim2.new(0.03, 0, 0, 8)
+alGrid.Parent = C.assetListFrame
+
+C.assetSettingsFrame = Instance.new("Frame")
+C.assetSettingsFrame.Size = UDim2.new(1, 0, 0, 150)
+C.assetSettingsFrame.BackgroundTransparency = 1
+C.assetSettingsFrame.Visible = false
+C.assetSettingsFrame.Parent = TabAssets.frame
+Instance.new("UIListLayout", C.assetSettingsFrame).Padding = UDim.new(0, 8)
+local sep = Instance.new("Frame")
+sep.Size = UDim2.new(1, 0, 0, 1)
+sep.BackgroundColor3 = Theme.Border
+sep.BorderSizePixel = 0
+sep.Parent = C.assetSettingsFrame
+C.assetSettingsName = createSectionHeader("SELECTED: ???", C.assetSettingsFrame)
+local asGrid = Instance.new("Frame")
+asGrid.Size = UDim2.new(1, 0, 0, 80)
+asGrid.BackgroundTransparency = 1
+asGrid.Parent = C.assetSettingsFrame
+local asgl = Instance.new("UIGridLayout")
+asgl.CellSize = UDim2.new(0.48, 0, 0, 40)
+asgl.CellPadding = UDim2.new(0.04, 0, 0, 8)
+asgl.Parent = asGrid
+C.assetSettingsOffsetY = {createTechInput("Y-OFFSET", "0", asGrid)}
+C.assetSettingsWeight = {createTechInput("PROBABILITY", "1", asGrid)}
+C.assetSettingsAlign = {createTechToggle("Align to Surface", C.assetSettingsFrame)}
+C.assetSettingsActive = {createTechToggle("Active in Brush", C.assetSettingsFrame)}
+
+-- Tuning Tab
+createSectionHeader("TRANSFORMATION RANDOMIZER", TabTuning.frame)
+local transGrid = Instance.new("Frame")
+transGrid.Size = UDim2.new(1, 0, 0, 0)
+transGrid.AutomaticSize = Enum.AutomaticSize.Y
+transGrid.BackgroundTransparency = 1
+transGrid.Parent = TabTuning.frame
+local tgl = Instance.new("UIGridLayout")
+tgl.CellSize = UDim2.new(0.48, 0, 0, 40)
+tgl.CellPadding = UDim2.new(0.04, 0, 0, 8)
+tgl.Parent = transGrid
+C.scaleMinBox = {createTechInput("SCALE MIN", "0.8", transGrid)}
+C.scaleMaxBox = {createTechInput("SCALE MAX", "1.2", transGrid)}
+C.rotXMinBox = {createTechInput("ROT X MIN", "0", transGrid)}
+C.rotXMaxBox = {createTechInput("ROT X MAX", "0", transGrid)}
+C.rotZMinBox = {createTechInput("ROT Z MIN", "0", transGrid)}
+C.rotZMaxBox = {createTechInput("ROT Z MAX", "0", transGrid)}
+-- Added Missing Color Inputs
+C.hueMinBox = {createTechInput("HUE MIN", "0", transGrid)}
+C.hueMaxBox = {createTechInput("HUE MAX", "0", transGrid)}
+C.satMinBox = {createTechInput("SAT MIN", "0", transGrid)}
+C.satMaxBox = {createTechInput("SAT MAX", "0", transGrid)}
+C.valMinBox = {createTechInput("VAL MIN", "0", transGrid)}
+C.valMaxBox = {createTechInput("VAL MAX", "0", transGrid)}
+C.transMinBox = {createTechInput("TRNS MIN", "0", transGrid)}
+C.transMaxBox = {createTechInput("TRNS MAX", "0", transGrid)}
+
+C.randomizeBtn = {createTechButton("RANDOMIZE VALUES", TabTuning.frame)}
+C.randomizeBtn[1].Size = UDim2.new(1, 0, 0, 32)
+
+createSectionHeader("ENVIRONMENT CONTROL", TabTuning.frame)
+C.physicsModeBtn = {createTechToggle("Physics Placement", TabTuning.frame)}
+C.physicsSettleTimeBox = {createTechInput("PHYSICS TIME (s)", "1.5", TabTuning.frame)}
+C.snapToGridBtn = {createTechToggle("Snap to Grid", TabTuning.frame)}
+C.gridSizeBox = {createTechInput("GRID SIZE", "4", TabTuning.frame)}
+C.surfaceAngleBtn = {createTechToggle("Surface Lock: OFF", TabTuning.frame)}
+C.avoidOverlapBtn = {createTechToggle("Avoid Overlap", TabTuning.frame)}
+C.densityPreviewBtn = {createTechToggle("Show Density Dots", TabTuning.frame)}
+
+createSectionHeader("MASKING & FILTERS", TabTuning.frame)
+C.maskingModeBtn = {createTechButton("MASK: OFF", TabTuning.frame)}
+C.pickMaskTargetBtn = {createTechButton("PICK FROM SELECTION", TabTuning.frame)}
+C.maskingTargetLabel = Instance.new("TextLabel")
+C.maskingTargetLabel.Size = UDim2.new(1, 0, 0, 20)
+C.maskingTargetLabel.BackgroundTransparency = 1
+C.maskingTargetLabel.Text = "TARGET: NONE"
+C.maskingTargetLabel.Font = Theme.FontTech
+C.maskingTargetLabel.TextColor3 = Theme.Accent
+C.maskingTargetLabel.TextSize = 12
+C.maskingTargetLabel.Parent = TabTuning.frame
+C.autoTerrainPaintBtn = {createTechToggle("Auto-Paint Terrain", TabTuning.frame)}
+
+-- Switch Tab
+switchTab("Tools")
+
+-- ==========================================
+-- LOGIC HELPERS & IMPLEMENTATION
+-- ==========================================
+
+trim = function(s)
 	return s:match("^%s*(.-)%s*$") or s
 end
 
-local function populateMaterialPicker()
-	for _, material in ipairs(Enum.Material:GetEnumItems()) do
-		local btn = Instance.new("ImageButton")
-		btn.Name = material.Name
-		btn.Size = UDim2.new(0, 56, 0, 56)
-		btn.BackgroundColor3 = Theme.Section
-		btn.Image = "rbxasset://textures/terrain/materials/v2/" .. material.Name .. ".png"
-		btn.Parent = C.materialGridFrame
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 4)
-		corner.Parent = btn
-
-		local stroke = Instance.new("UIStroke")
-		stroke.Thickness = 2
-		stroke.Color = Theme.Border
-		stroke.Enabled = false
-		stroke.Parent = btn
-
-		btn.MouseButton1Click:Connect(function()
-			maskingValue = material
-			updateMaskingUI()
-		end)
-	end
-end
-
-local function snapPositionToGrid(position, size)
-	if size <= 0 then return position end
-	local x = math.floor(position.X / size + 0.5) * size
-	local y = math.floor(position.Y / size + 0.5) * size
-	local z = math.floor(position.Z / size + 0.5) * size
-	return Vector3.new(x, y, z)
-end
-
 parseNumber = function(txt, fallback)
-	local ok, n = pcall(function()
-		return tonumber(trim(txt))
-	end)
-	if ok and n then
-		return n
-	end
+	local ok, n = pcall(function() return tonumber(trim(txt)) end)
+	if ok and n then return n end
 	return fallback
 end
 
-local function loadOffsets()
+loadOffsets = function()
 	local jsonString = plugin:GetSetting(SETTINGS_KEY)
 	if jsonString and #jsonString > 0 then
 		local ok, data = pcall(HttpService.JSONDecode, HttpService, jsonString)
-		if ok and type(data) == "table" then
-			assetOffsets = data
-		else
-			assetOffsets = {}
-		end
-	else
-		assetOffsets = {}
-	end
+		if ok and type(data) == "table" then assetOffsets = data else assetOffsets = {} end
+	else assetOffsets = {} end
+end
+
+persistOffsets = function()
+	local ok, jsonString = pcall(HttpService.JSONEncode, HttpService, assetOffsets)
+	if ok then plugin:SetSetting(SETTINGS_KEY, jsonString) end
 end
 
 local function randFloat(a, b)
 	return a + math.random() * (b - a)
 end
 
-local function randomPointInCircle(radius)
+randomPointInCircle = function(radius)
 	local r = radius * math.sqrt(math.random())
 	local theta = math.random() * 2 * math.pi
 	return Vector3.new(r * math.cos(theta), 0, r * math.sin(theta))
@@ -1170,263 +671,13 @@ local function getRandomPointInSphere(radius)
 	local theta = u * 2 * math.pi
 	local phi = math.acos(2 * v - 1)
 	local r = math.cbrt(math.random()) * radius
-	local sinPhi = math.sin(phi)
-	local cosPhi = math.cos(phi)
-	local sinTheta = math.sin(theta)
-	local cosTheta = math.cos(theta)
-	return Vector3.new(r * sinPhi * cosTheta, r * sinPhi * sinTheta, r * cosPhi)
+	return Vector3.new(r * math.sin(phi) * math.cos(theta), r * math.sin(phi) * math.sin(theta), r * math.cos(phi))
 end
 
-
--- Function to calculate a point on a Catmull-Rom spline
 catmullRom = function(p0, p1, p2, p3, t)
 	local t2 = t * t
 	local t3 = t2 * t
-
-	local out = 0.5 * (
-		(2 * p1) +
-			(-p0 + p2) * t +
-			(2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
-			(-p0 + 3 * p1 - 3 * p2 + p3) * t3
-	)
-	return out
-end
-
--- Asset and UI Management Functions
-local function setupViewport(viewport, asset)
-	-- Clean up previous content
-	for _, child in ipairs(viewport:GetChildren()) do
-		child:Destroy()
-	end
-
-	local worldModel = Instance.new("WorldModel")
-	worldModel.Parent = viewport
-
-	local camera = Instance.new("Camera")
-	camera.Parent = viewport
-	viewport.CurrentCamera = camera
-
-	local clone = asset:Clone()
-
-	-- Make sure all parts are anchored to prevent physics issues
-	for _, desc in ipairs(clone:GetDescendants()) do
-		if desc:IsA("BasePart") then
-			desc.Anchored = true
-		end
-	end
-
-	clone.Parent = worldModel
-
-	-- Calculate camera position to frame the asset
-	local ok, bboxCFrame, bboxSize = pcall(function()
-		return clone:GetBoundingBox()
-	end)
-
-	if not ok or not bboxCFrame or not bboxSize then
-		warn("Brush Tool: Could not get bounding box for asset preview: " .. clone.Name)
-		clone:Destroy()
-		return
-	end
-
-	local center = bboxCFrame.Position
-	local largestDim = math.max(bboxSize.X, bboxSize.Y, bboxSize.Z)
-
-	-- Add a small buffer so the asset isn't touching the edges
-	largestDim = largestDim * 1.2
-	if largestDim < 1 then
-		largestDim = 1 -- Prevent assets that are too small from being too close
-	end
-
-	-- A bit of trigonometry to find the right distance for the camera
-	local camDistance = (largestDim / 2) / math.tan(math.rad(camera.FieldOfView / 2))
-
-	-- Position camera at an angle for a better, more isometric-style view
-	local camOffset = Vector3.new(1, 0.8, 1).Unit * (camDistance + largestDim * 0.5)
-	camera.CFrame = CFrame.new(center + camOffset, center)
-end
-
-updateAssetSettingsPanel = function()
-	if not selectedAssetInUI then
-		C.assetSettingsPanel.Visible = false
-		return
-	end
-
-	C.assetSettingsPanel.Visible = true
-	if C.assetSettingsPanel:FindFirstChild("Content") then
-		C.assetSettingsPanel:FindFirstChild("Content").Visible = true
-	end
-	C.assetSettingsName.Text = selectedAssetInUI
-
-	local assetName = selectedAssetInUI
-	local offsetKey, alignKey, activeKey, weightKey = assetName, assetName .. "_align", assetName .. "_active", assetName .. "_weight"
-
-	-- Populate controls
-	C.assetSettingsOffsetY.Text = tostring(assetOffsets[offsetKey] or 0)
-	C.assetSettingsWeight.Text = tostring(assetOffsets[weightKey] or 1)
-
-	local isAligning = assetOffsets[alignKey] or false
-	C.assetSettingsAlign.Text = isAligning and "Ya" or "Tidak"
-	C.assetSettingsAlign.BackgroundColor3 = isAligning and Theme.Green or Theme.Red
-
-	local isActive = assetOffsets[activeKey] == nil or assetOffsets[activeKey]
-	C.assetSettingsActive.Text = isActive and "✓" or ""
-	C.assetSettingsActive.BackgroundColor3 = isActive and Theme.Green or Theme.Red
-
-	local terrainMaterial = assetOffsets[assetName .. "_terrainMaterial"]
-	if terrainMaterial then
-		C.assetSettingsTerrainMaterial.Text = terrainMaterial
-	else
-		C.assetSettingsTerrainMaterial.Text = "Tidak Ada"
-	end
-end
-
-updateAssetUIList = function()
-	C.assetListFrame.CanvasPosition = Vector2.new(0, 0)
-	for _, v in ipairs(C.assetListFrame:GetChildren()) do
-		if v:IsA("GuiObject") and not v:IsA("UIGridLayout") then
-			v:Destroy()
-		end
-	end
-
-	local children = assetsFolder:GetChildren()
-
-	for i, asset in ipairs(children) do
-		local assetName = asset.Name
-
-		-- Main card button
-		local card = Instance.new("TextButton")
-		card.Name = assetName .. "_Card"
-		card.Size = UDim2.new(1, 0, 1, 0) -- Use the size from GridLayout
-		card.BackgroundColor3 = Theme.Background
-		card.Text = ""
-		card.LayoutOrder = i
-		card.Parent = C.assetListFrame
-
-		local corner = Instance.new("UICorner", card)
-		corner.CornerRadius = UDim.new(0, 4)
-
-		local cardLayout = Instance.new("UIListLayout", card)
-		cardLayout.Padding = UDim.new(0, 4)
-		cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
-		cardLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-
-		local border = Instance.new("UIStroke")
-		border.Thickness = 2
-		border.Color = Theme.Border
-		border.Parent = card
-
-		-- Handle highlighting for builder slots
-		local postSlotBorder = C.builderPostSlot:FindFirstChildOfClass("UIStroke")
-		if postSlotBorder then
-			postSlotBorder.Color = (builderSlotToAssign == "Post") and Theme.Accent or Theme.Border
-		end
-		local segmentSlotBorder = C.builderSegmentSlot:FindFirstChildOfClass("UIStroke")
-		if segmentSlotBorder then
-			segmentSlotBorder.Color = (builderSlotToAssign == "Segment") and Theme.Accent or Theme.Border
-		end
-
-		-- Viewport
-		local viewport = Instance.new("ViewportFrame")
-		viewport.Size = UDim2.new(1, -8, 0, 140)
-		viewport.BackgroundColor3 = Theme.Section
-		viewport.Ambient = Color3.fromRGB(200, 200, 200)
-		viewport.LightColor = Color3.fromRGB(150, 150, 150)
-		viewport.LightDirection = Vector3.new(-1, -2, -0.5)
-		viewport.LayoutOrder = 1
-		viewport.Parent = card
-		Instance.new("UICorner", viewport).CornerRadius = UDim.new(0, 4)
-		task.spawn(setupViewport, viewport, asset)
-
-		-- Name Label
-		local lbl = createStyledLabel(assetName, card)
-		lbl.Size = UDim2.new(1, -8, 0, 16)
-		lbl.TextXAlignment = Enum.TextXAlignment.Center
-		lbl.TextTruncate = Enum.TextTruncate.AtEnd
-		lbl.LayoutOrder = 2
-		lbl.Parent = card
-
-		-- Selection Logic
-		card.MouseButton1Click:Connect(function()
-			if currentMode == "Builder" and builderSlotToAssign then
-				local asset = assetsFolder:FindFirstChild(assetName)
-				if builderSlotToAssign == "Post" then
-					builderPostAsset = asset
-					C.builderPostLabel.Text = asset.Name
-				elseif builderSlotToAssign == "Segment" then
-					builderSegmentAsset = asset
-					C.builderSegmentLabel.Text = asset.Name
-				end
-				builderSlotToAssign = nil -- Clear assignment
-			elseif selectedAssetInUI == assetName then
-				-- Deselect if clicking the same asset again
-				selectedAssetInUI = nil
-				C.assetSettingsPanel.Visible = false
-			else
-				selectedAssetInUI = assetName
-				updateAssetSettingsPanel() -- Update and show the panel
-			end
-			updateAssetUIList() -- Redraw to update selection highlights
-		end)
-
-		-- Right click for special modes
-		card.MouseButton2Click:Connect(function()
-			if currentMode == "Erase" then
-				eraseFilter[assetName] = not eraseFilter[assetName]
-			elseif currentMode == "Replace" then
-				if sourceAsset == assetName then sourceAsset = nil
-				elseif targetAsset == assetName then targetAsset = nil
-				elseif not sourceAsset then sourceAsset = assetName
-				elseif not targetAsset then targetAsset = assetName
-				else targetAsset = assetName end
-			end
-			updateAssetUIList()
-		end)
-
-		-- Update appearance based on state
-		if selectedAssetInUI == assetName then
-			border.Color = Theme.Accent
-			border.Enabled = true
-		elseif currentMode == "Erase" and eraseFilter[assetName] then
-			border.Color = Theme.Red
-			border.Enabled = true
-		elseif currentMode == "Replace" and sourceAsset == assetName then
-			border.Color = Theme.Blue
-			border.Enabled = true
-		elseif currentMode == "Replace" and targetAsset == assetName then
-			border.Color = Theme.Green
-			border.Enabled = true
-		else
-			border.Enabled = false
-		end
-	end
-end
-
--- Core Logic Functions
-
-getRandomWeightedAsset = function(assetList)
-	local totalWeight = 0
-	for _, asset in ipairs(assetList) do
-		local weight = assetOffsets[asset.Name .. "_weight"] or 1
-		totalWeight = totalWeight + weight
-	end
-
-	if totalWeight == 0 then
-		-- Jika semua bobot adalah 0, kembalikan secara acak untuk menghindari error
-		return assetList[math.random(1, #assetList)]
-	end
-
-	local randomNum = math.random() * totalWeight
-	local currentWeight = 0
-	for _, asset in ipairs(assetList) do
-		local weight = assetOffsets[asset.Name .. "_weight"] or 1
-		currentWeight = currentWeight + weight
-		if randomNum <= currentWeight then
-			return asset
-		end
-	end
-
-	-- Fallback jika terjadi kesalahan floating point
-	return assetList[#assetList]
+	return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
 end
 
 getWorkspaceContainer = function()
@@ -1439,13 +690,26 @@ getWorkspaceContainer = function()
 	return container
 end
 
-local function scaleModel(model, scale)
-	local ok, bboxCFrame, bboxSize = pcall(function()
-		return model:GetBoundingBox()
-	end)
-	if not ok then
-		return
+getRandomWeightedAsset = function(assetList)
+	local totalWeight = 0
+	for _, asset in ipairs(assetList) do
+		local weight = assetOffsets[asset.Name .. "_weight"] or 1
+		totalWeight = totalWeight + weight
 	end
+	if totalWeight == 0 then return assetList[math.random(1, #assetList)] end
+	local randomNum = math.random() * totalWeight
+	local currentWeight = 0
+	for _, asset in ipairs(assetList) do
+		local weight = assetOffsets[asset.Name .. "_weight"] or 1
+		currentWeight = currentWeight + weight
+		if randomNum <= currentWeight then return asset end
+	end
+	return assetList[#assetList]
+end
+
+scaleModel = function(model, scale)
+	local ok, bboxCFrame, bboxSize = pcall(function() return model:GetBoundingBox() end)
+	if not ok then return end
 	local center = bboxCFrame.Position
 	for _, d in ipairs(model:GetDescendants()) do
 		if d:IsA("BasePart") then
@@ -1455,41 +719,31 @@ local function scaleModel(model, scale)
 		elseif d:IsA("SpecialMesh") then
 			d.Scale = d.Scale * scale
 		elseif d:IsA("MeshPart") then
-			pcall(function()
-				d.Mesh.Scale = d.Mesh.Scale * scale
-			end)
+			pcall(function() d.Mesh.Scale = d.Mesh.Scale * scale end)
 		end
 	end
 end
 
-local function randomizeProperties(target)
-	local hmin = parseNumber(C.hueMinBox.Text, 0)
-	local hmax = parseNumber(C.hueMaxBox.Text, 0)
-	local smin = parseNumber(C.satMinBox.Text, 0)
-	local smax = parseNumber(C.satMaxBox.Text, 0)
-	local vmin = parseNumber(C.valMinBox.Text, 0)
-	local vmax = parseNumber(C.valMaxBox.Text, 0)
-	local tmin = parseNumber(C.transMinBox.Text, 0)
-	local tmax = parseNumber(C.transMaxBox.Text, 0)
+randomizeProperties = function(target)
+	local hmin = parseNumber(C.hueMinBox[1].Text, 0)
+	local hmax = parseNumber(C.hueMaxBox[1].Text, 0)
+	local smin = parseNumber(C.satMinBox[1].Text, 0)
+	local smax = parseNumber(C.satMaxBox[1].Text, 0)
+	local vmin = parseNumber(C.valMinBox[1].Text, 0)
+	local vmax = parseNumber(C.valMaxBox[1].Text, 0)
+	local tmin = parseNumber(C.transMinBox[1].Text, 0)
+	local tmax = parseNumber(C.transMaxBox[1].Text, 0)
 
 	local hasColorShift = (hmin ~= 0 or hmax ~= 0 or smin ~= 0 or smax ~= 0 or vmin ~= 0 or vmax ~= 0)
 	local hasTransShift = (tmin ~= 0 or tmax ~= 0)
-
-	if not hasColorShift and not hasTransShift then
-		return
-	end
+	if not hasColorShift and not hasTransShift then return end
 
 	local parts = {}
-	if target:IsA("BasePart") then
-		table.insert(parts, target)
-	else -- It's a Model
+	if target:IsA("BasePart") then table.insert(parts, target) else
 		for _, descendant in ipairs(target:GetDescendants()) do
-			if descendant:IsA("BasePart") then
-				table.insert(parts, descendant)
-			end
+			if descendant:IsA("BasePart") then table.insert(parts, descendant) end
 		end
 	end
-
 	for _, part in ipairs(parts) do
 		if hasColorShift then
 			local h, s, v = part.Color:ToHSV()
@@ -1498,51 +752,39 @@ local function randomizeProperties(target)
 			v = math.clamp(v + randFloat(vmin, vmax), 0, 1)
 			part.Color = Color3.fromHSV(h, s, v)
 		end
-
 		if hasTransShift then
 			part.Transparency = math.clamp(part.Transparency + randFloat(tmin, tmax), 0, 1)
 		end
 	end
 end
 
-local function findSurfacePositionAndNormal()
-	if not mouse then
-		return nil, nil, nil
-	end
+local function snapPositionToGrid(position, size)
+	if size <= 0 then return position end
+	local x = math.floor(position.X / size + 0.5) * size
+	local y = math.floor(position.Y / size + 0.5) * size
+	local z = math.floor(position.Z / size + 0.5) * size
+	return Vector3.new(x, y, z)
+end
 
+findSurfacePositionAndNormal = function()
+	if not mouse then return nil, nil, nil end
 	local camera = workspace.CurrentCamera
-	if not camera then
-		return nil, nil, nil
-	end
-
-	-- Create a ray from the camera to the mouse's position in 3D space
 	local unitRay = camera:ViewportPointToRay(mouse.X, mouse.Y)
-
 	local params = RaycastParams.new()
 	params.FilterDescendantsInstances = { previewFolder, getWorkspaceContainer(), densityPreviewFolder, pathPreviewFolder, cablePreviewFolder }
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
-
 	if result then
-		-- Terapkan filter Kunci Permukaan
-		if surfaceAngleMode == "Floor" and result.Normal.Y < 0.7 then
-			-- Dalam mode Lantai, jangan melukis di dinding/lereng curam
-			return nil, nil, nil
-		elseif surfaceAngleMode == "Wall" and math.abs(result.Normal.Y) > 0.3 then
-			-- Dalam mode Dinding, jangan melukis di lantai/langit-langit
-			return nil, nil, nil
-		end
-
+		if surfaceAngleMode == "Floor" and result.Normal.Y < 0.7 then return nil, nil, nil
+		elseif surfaceAngleMode == "Wall" and math.abs(result.Normal.Y) > 0.3 then return nil, nil, nil end
 		return result.Position, result.Normal, result.Instance
 	end
 	return nil, nil, nil
 end
 
-
-local function paintTerrainUnderAsset(asset, materialName)
+paintTerrainUnderAsset = function(asset, materialName)
 	local material = Enum.Material[materialName]
 	if not material then return end
-
 	local size, position
 	if asset:IsA("Model") and asset.PrimaryPart then
 		size = asset:GetExtentsSize()
@@ -1550,68 +792,55 @@ local function paintTerrainUnderAsset(asset, materialName)
 	elseif asset:IsA("BasePart") then
 		size = asset.Size
 		position = asset.Position
-	else
-		return
-	end
-
+	else return end
 	local paintRadius = math.max(size.X, size.Z) / 2 + 2
 	local paintPosition = position
-
-	-- Define the region to save for undo
 	local regionMin = Vector3.new(paintPosition.X - paintRadius, -50, paintPosition.Z - paintRadius)
 	local regionMax = Vector3.new(paintPosition.X + paintRadius, 50, paintPosition.Z + paintRadius)
 	local region = Region3.new(regionMin, regionMax):ExpandToGrid(4)
-
-	-- Save the region for undo and paste it back on undo
 	local terrainData = workspace.Terrain:CopyRegion(region)
-	table.insert(terrainUndoStack, {
-		Region = region,
-		Data = terrainData
-	})
-
+	table.insert(terrainUndoStack, { Region = region, Data = terrainData })
 	workspace.Terrain:FillBall(CFrame.new(paintPosition), paintRadius, material)
 end
 
+anchorPhysicsGroup = function(group, parentFolder)
+	task.spawn(function()
+		task.wait(physicsSettleTime)
+		for _, model in ipairs(group) do
+			if model and model.Parent then
+				model.Parent = parentFolder
+				for _, desc in ipairs(model:GetDescendants()) do
+					if desc:IsA("BasePart") then desc.Anchored = true end
+				end
+			end
+		end
+	end)
+end
+
 placeAsset = function(assetToClone, position, normal)
-	local smin = parseNumber(C.scaleMinBox.Text, 0.8)
-	local smax = parseNumber(C.scaleMaxBox.Text, 1.2)
-	if smin <= 0 then smin = 0.1 end
-	if smax < smin then smax = smin end
+	local smin = parseNumber(C.scaleMinBox[1].Text, 0.8)
+	local smax = parseNumber(C.scaleMaxBox[1].Text, 1.2)
+	if smin <= 0 then smin = 0.1 end; if smax < smin then smax = smin end
 
 	local clone = assetToClone:Clone()
 	randomizeProperties(clone)
-
 	if clone:IsA("Model") and not clone.PrimaryPart then
-		for _, v in ipairs(clone:GetDescendants()) do
-			if v:IsA("BasePart") then
-				clone.PrimaryPart = v
-				break
-			end
-		end
+		for _, v in ipairs(clone:GetDescendants()) do if v:IsA("BasePart") then clone.PrimaryPart = v; break end end
 	end
-
 	local s = randFloat(smin, smax)
-
 	local xrot, yrot, zrot
 	local effectiveNormal = normal or Vector3.new(0, 1, 0)
 
 	if normal and surfaceAngleMode == "Floor" then
-		xrot = 0
-		zrot = 0
-		yrot = math.rad(math.random() * 360) -- Hanya rotasi Y
-		effectiveNormal = Vector3.new(0, 1, 0) -- Paksa vektor 'up'
+		xrot = 0; zrot = 0; yrot = math.rad(math.random() * 360); effectiveNormal = Vector3.new(0, 1, 0)
 	else
-		-- Mode "Off", "Wall", atau Volume (normal == nil)
-		local rotXMin = math.rad(parseNumber(C.rotXMinBox.Text, 0))
-		local rotXMax = math.rad(parseNumber(C.rotXMaxBox.Text, 0))
-		local rotZMin = math.rad(parseNumber(C.rotZMinBox.Text, 0))
-		local rotZMax = math.rad(parseNumber(C.rotZMaxBox.Text, 0))
-		xrot = randFloat(rotXMin, rotXMax)
-		yrot = math.rad(math.random() * 360)
-		zrot = randFloat(rotZMin, rotZMax)
+		local rotXMin = math.rad(parseNumber(C.rotXMinBox[1].Text, 0))
+		local rotXMax = math.rad(parseNumber(C.rotXMaxBox[1].Text, 0))
+		local rotZMin = math.rad(parseNumber(C.rotZMinBox[1].Text, 0))
+		local rotZMax = math.rad(parseNumber(C.rotZMaxBox[1].Text, 0))
+		xrot = randFloat(rotXMin, rotXMax); yrot = math.rad(math.random() * 360); zrot = randFloat(rotZMin, rotZMax)
 	end
 	local randomRotation = CFrame.Angles(xrot, yrot, zrot)
-
 	local assetName = assetToClone.Name
 	local customOffset = assetOffsets[assetName] or 0
 	local shouldAlign = assetOffsets[assetName .. "_align"] or false
@@ -1619,64 +848,48 @@ placeAsset = function(assetToClone, position, normal)
 	if clone:IsA("Model") and clone.PrimaryPart then
 		clone:SetPrimaryPartCFrame(CFrame.new(position))
 		if math.abs(s - 1) > 0.0001 then scaleModel(clone, s) end
-
 		local ok, bboxCFrame, bboxSize = pcall(function() return clone:GetBoundingBox() end)
 		local finalPosition
 		if ok then
 			local pivotOffset = clone.PrimaryPart.Position - bboxCFrame.Position
 			local worldPivot = CFrame.new(position) * pivotOffset
 			local currentBottomY_inWorld = worldPivot.Y - (bboxSize.Y / 2)
-			-- Gunakan effectiveNormal untuk perhitungan offset
 			local shiftY_vector = effectiveNormal * ((position.Y - currentBottomY_inWorld) + customOffset)
 			finalPosition = clone:GetPrimaryPartCFrame().Position + shiftY_vector
 		else
-			warn("Tidak bisa mendapatkan bounding box untuk " .. clone.Name .. ", penempatan mungkin tidak akurat.")
-			finalPosition = clone:GetPrimaryPartCFrame().Position + (effectiveNormal * customOffset) -- Fallback
+			finalPosition = clone:GetPrimaryPartCFrame().Position + (effectiveNormal * customOffset)
 		end
-
-		if snapToGridEnabled then
-			finalPosition = snapPositionToGrid(finalPosition, gridSize)
-		end
+		if snapToGridEnabled then finalPosition = snapPositionToGrid(finalPosition, gridSize) end
 
 		local finalCFrame
-		local forceAlign = (surfaceAngleMode == "Wall") -- Selalu selaraskan dalam mode Dinding
-		-- Selaraskan jika dipaksa (Dinding) ATAU (jika diaktifkan (Selaras: Ya) DAN mode Mati)
+		local forceAlign = (surfaceAngleMode == "Wall")
 		if (forceAlign or (shouldAlign and surfaceAngleMode == "Off")) and normal then
 			local rotatedCFrame = CFrame.new() * randomRotation
 			local look = rotatedCFrame.LookVector
 			local rightVec = look:Cross(effectiveNormal).Unit
 			local lookActual = effectiveNormal:Cross(rightVec).Unit
 			if rightVec.Magnitude < 0.9 then
-				look = rotatedCFrame.RightVector
-				rightVec = look:Cross(effectiveNormal).Unit
-				lookActual = effectiveNormal:Cross(rightVec).Unit
+				look = rotatedCFrame.RightVector; rightVec = look:Cross(effectiveNormal).Unit; lookActual = effectiveNormal:Cross(rightVec).Unit
 			end
 			finalCFrame = CFrame.fromMatrix(finalPosition, rightVec, effectiveNormal, -lookActual)
 		else
-			-- Mode lantai, atau mode Mati dengan Selaras: Tdk
 			finalCFrame = CFrame.new(finalPosition) * randomRotation
 		end
 		clone:SetPrimaryPartCFrame(finalCFrame)
-
 	elseif clone:IsA("BasePart") then
 		clone.Size = clone.Size * s
 		local finalYOffset = (clone.Size.Y / 2) + customOffset
-		-- Gunakan effectiveNormal untuk perhitungan offset
 		local finalPos = position + (effectiveNormal * finalYOffset)
-		if snapToGridEnabled then
-			finalPos = snapPositionToGrid(finalPos, gridSize)
-		end
+		if snapToGridEnabled then finalPos = snapPositionToGrid(finalPos, gridSize) end
 		local finalCFrame
-		local forceAlign = (surfaceAngleMode == "Wall") -- Selalu selaraskan dalam mode Dinding
+		local forceAlign = (surfaceAngleMode == "Wall")
 		if (forceAlign or (shouldAlign and surfaceAngleMode == "Off")) and normal then
 			local rotatedCFrame = CFrame.new() * randomRotation
 			local look = rotatedCFrame.LookVector
 			local rightVec = look:Cross(effectiveNormal).Unit
 			local lookActual = effectiveNormal:Cross(rightVec).Unit
 			if rightVec.Magnitude < 0.9 then
-				look = rotatedCFrame.RightVector
-				rightVec = look:Cross(effectiveNormal).Unit
-				lookActual = effectiveNormal:Cross(rightVec).Unit
+				look = rotatedCFrame.RightVector; rightVec = look:Cross(effectiveNormal).Unit; lookActual = effectiveNormal:Cross(rightVec).Unit
 			end
 			finalCFrame = CFrame.fromMatrix(finalPos, rightVec, effectiveNormal, -lookActual)
 		else
@@ -1685,426 +898,38 @@ placeAsset = function(assetToClone, position, normal)
 		clone.CFrame = finalCFrame
 	end
 
-	-- Handle physics drop
 	if physicsModeEnabled and currentMode == "Paint" then
-		clone.Parent = getWorkspaceContainer() -- Parent to workspace temporarily for physics
+		clone.Parent = getWorkspaceContainer()
 		for _, desc in ipairs(clone:GetDescendants()) do
-			if desc:IsA("BasePart") then
-				desc.Anchored = false
-				desc.CanCollide = true
-			end
+			if desc:IsA("BasePart") then desc.Anchored = false; desc.CanCollide = true end
 		end
-		-- Move it up slightly to ensure it drops
 		clone:TranslateBy(Vector3.new(0, 2, 0))
 	end
-
-	-- Auto-paint terrain if enabled
 	if autoTerrainPaint then
 		local terrainMaterial = assetOffsets[assetName .. "_terrainMaterial"]
-		if terrainMaterial then
-			paintTerrainUnderAsset(clone, terrainMaterial)
-		end
+		if terrainMaterial then paintTerrainUnderAsset(clone, terrainMaterial) end
 	end
-
 	return clone
 end
 
-local function anchorPhysicsGroup(group, parentFolder)
-	task.spawn(function()
-		task.wait(physicsSettleTime)
-
-		for _, model in ipairs(group) do
-			if model and model.Parent then -- Pastikan model belum dihancurkan
-				model.Parent = parentFolder
-				for _, desc in ipairs(model:GetDescendants()) do
-					if desc:IsA("BasePart") then
-						desc.Anchored = true
-					end
-				end
-			end
-		end
-	end)
-end
-
-local function paintInVolume(center)
-	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
-	local density = math.max(1, math.floor(parseNumber(C.densityBox.Text, 10)))
-
-	ChangeHistoryService:SetWaypoint("Brush - Before VolumePaint")
-	local container = getWorkspaceContainer()
-	local groupFolder = Instance.new("Folder")
-	groupFolder.Name = "BrushVolume_" .. tostring(math.floor(os.time()))
-	groupFolder.Parent = container
-
-	-- Filter for only active assets
-	local allAssets = assetsFolder:GetChildren()
-	local activeAssets = {}
-	for _, asset in ipairs(allAssets) do
-		local isActive = assetOffsets[asset.Name .. "_active"]
-		if isActive == nil then isActive = true end
-		if isActive then table.insert(activeAssets, asset) end
-	end
-
-	if #activeAssets == 0 then
-		warn("Brush Tool: No active assets to paint in volume.")
-		groupFolder:Destroy()
-		return
-	end
-
-	for i = 1, density do
-		local assetToPlace = getRandomWeightedAsset(activeAssets)
-		if assetToPlace then
-			local randomPoint = center + getRandomPointInSphere(radius)
-			-- Pass nil for normal to indicate no surface alignment
-			local placedAsset = placeAsset(assetToPlace, randomPoint, nil) 
-			if placedAsset then
-				placedAsset.Parent = groupFolder
-			end
-		end
-	end
-
-	if #groupFolder:GetChildren() == 0 then
-		groupFolder:Destroy()
-	end
-
-	ChangeHistoryService:SetWaypoint("Brush - After VolumePaint")
-end
-
-local function stampAt(center, surfaceNormal)
-	ChangeHistoryService:SetWaypoint("Brush - Before Stamp")
-	local container = getWorkspaceContainer()
-	local groupFolder = Instance.new("Folder")
-	groupFolder.Name = "BrushStamp_" .. tostring(math.floor(os.time()))
-	groupFolder.Parent = container
-
-	-- Filter for only active assets
-	local allAssets = assetsFolder:GetChildren()
-	local activeAssets = {}
-	for _, asset in ipairs(allAssets) do
-		local isActive = assetOffsets[asset.Name .. "_active"]
-		if isActive == nil then isActive = true end
-		if isActive then table.insert(activeAssets, asset) end
-	end
-
-	if #activeAssets == 0 then
-		warn("Brush Tool: No active assets to stamp.")
-		groupFolder:Destroy()
-		ChangeHistoryService:SetWaypoint("Brush - Canceled (No active assets)")
-		return
-	end
-
-	local assetToPlace = getRandomWeightedAsset(activeAssets)
-	if assetToPlace then
-		local placedAsset = placeAsset(assetToPlace, center, surfaceNormal)
-		if placedAsset then
-			placedAsset.Parent = groupFolder
-		end
-	end
-
-	if #groupFolder:GetChildren() == 0 then
-		groupFolder:Destroy()
-	end
-
-	ChangeHistoryService:SetWaypoint("Brush - After Stamp")
-end
-
-local function paintAt(center, surfaceNormal)
-	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
-	local physicsGroup = {} -- Deklarasikan sebagai tabel lokal
-	-- Baca nilai density
-	local density = math.max(1, math.floor(parseNumber(C.densityBox.Text, 10)))
-
-	local smin = parseNumber(C.scaleMinBox.Text, 0.8)
-	local smax = parseNumber(C.scaleMaxBox.Text, 1.2)
-	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
-	if smin <= 0 then
-		smin = 0.1
-	end
-	if smax < smin then
-		smax = smin
-	end
+paintAt = function(center, surfaceNormal)
+	local radius = math.max(0.1, parseNumber(C.radiusBox[1].Text, 10))
+	local density = math.max(1, math.floor(parseNumber(C.densityBox[1].Text, 10)))
+	local spacing = math.max(0.1, parseNumber(C.spacingBox[1].Text, 1.0))
 
 	if avoidOverlap then
-		local camera = workspace.CurrentCamera
-		local unitRay = camera:ViewportPointToRay(mouse.X, mouse.Y)
-		local params = RaycastParams.new()
-		params.FilterDescendantsInstances = { previewFolder }
-		params.FilterType = Enum.RaycastFilterType.Exclude
+		local unitRay = workspace.CurrentCamera:ViewportPointToRay(mouse.X, mouse.Y)
+		local params = RaycastParams.new(); params.FilterDescendantsInstances = { previewFolder }; params.FilterType = Enum.RaycastFilterType.Exclude
 		local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
-		if result and result.Instance:IsDescendantOf(getWorkspaceContainer()) then
-			return -- Stop if we're trying to paint on an existing object
-		end
+		if result and result.Instance:IsDescendantOf(getWorkspaceContainer()) then return end
 	end
 
 	ChangeHistoryService:SetWaypoint("Brush - Before Paint")
-
 	local container = getWorkspaceContainer()
 	local groupFolder = Instance.new("Folder")
 	groupFolder.Name = "BrushGroup_" .. tostring(math.floor(os.time()))
 	groupFolder.Parent = container
-
 	local placed = {}
-
-	-- Filter for only active assets
-	local allAssets = assetsFolder:GetChildren()
-	local activeAssets = {}
-	for _, asset in ipairs(allAssets) do
-		local isActive = assetOffsets[asset.Name .. "_active"]
-		if isActive == nil then
-			isActive = true -- Default to true if not set
-		end
-		if isActive then
-			table.insert(activeAssets, asset)
-		end
-	end
-
-	if #activeAssets == 0 then
-		warn("Brush Tool: Tidak ada aset aktif yang dipilih untuk dilukis.")
-		groupFolder:Destroy()
-		ChangeHistoryService:SetWaypoint("Brush - Batal (Tidak ada aset aktif)")
-		return
-	end
-
-	-- Create a CFrame aligned to the surface for placing objects
-	local up = surfaceNormal
-	local look = Vector3.new(1, 0, 0)
-	if math.abs(up:Dot(look)) > 0.99 then
-		look = Vector3.new(0, 0, 1)
-	end
-	local right = look:Cross(up).Unit
-	local look_actual = up:Cross(right).Unit
-	local planeCFrame = CFrame.fromMatrix(center, right, up, -look_actual)
-
-	-- Loop berdasarkan density, bukan jumlah aset
-	for i = 1, density do
-		-- Pilih aset acak dari yang aktif menggunakan seleksi berbobot
-		local assetToClone = getRandomWeightedAsset(activeAssets)
-		if not assetToClone then
-			break
-		end
-		local clone = assetToClone:Clone()
-
-		if clone:IsA("Model") and not clone.PrimaryPart then
-			for _, v in ipairs(clone:GetDescendants()) do
-				if v:IsA("BasePart") then
-					clone.PrimaryPart = v
-					break
-				end
-			end
-		end
-
-		local found = false
-		local candidatePos = nil
-		local candidateNormal = surfaceNormal
-		local attempts = 0
-
-		while not found and attempts < 12 do
-			attempts = attempts + 1
-			local offset2D = randomPointInCircle(radius)
-			-- Transform the 2D offset to be relative to the surface plane
-			local spawnPos = planeCFrame:PointToWorldSpace(Vector3.new(offset2D.X, 0, offset2D.Z))
-
-			-- Raycast down to the surface from this point to handle non-flat surfaces
-			local rayOrigin = spawnPos + surfaceNormal * 5
-			local rayDir = -surfaceNormal * 10
-
-			local params = RaycastParams.new()
-			params.FilterDescendantsInstances = { previewFolder, container }
-			params.FilterType = Enum.RaycastFilterType.Exclude
-			local result = workspace:Raycast(rayOrigin, rayDir, params)
-
-			if result and result.Instance then
-				local isValidTarget = true
-				if maskingMode ~= "Off" and maskingValue then
-					local targetPart = result.Instance
-					if maskingMode == "Material" then
-						isValidTarget = (targetPart.Material == maskingValue)
-					elseif maskingMode == "Color" then
-						isValidTarget = (targetPart.Color == maskingValue)
-					elseif maskingMode == "Tag" then
-						isValidTarget = CollectionService:HasTag(targetPart, maskingValue)
-					end
-				end
-
-				if isValidTarget then
-					local posOnSurface = result.Position
-					local ok = true
-					for _, p in ipairs(placed) do
-						if (p - posOnSurface).Magnitude < spacing then
-							ok = false
-							break
-						end
-					end
-					if ok then
-						found = true
-						candidatePos = posOnSurface
-						candidateNormal = result.Normal -- Use the normal from the specific point
-					end
-				end
-			end
-		end
-
-		if not candidatePos then
-			clone:Destroy()
-		else
-			-- Lakukan penempatan menggunakan fungsi helper yang sudah direfactor
-			local placedAsset = placeAsset(assetToClone, candidatePos, candidateNormal)
-			if not physicsModeEnabled or currentMode ~= "Paint" then
-				placedAsset.Parent = groupFolder
-			else
-				table.insert(physicsGroup, placedAsset)
-			end
-			table.insert(placed, candidatePos)
-		end
-	end
-
-	-- Jika mode fisika, mulai proses penjangkaran
-	if physicsModeEnabled and currentMode == "Paint" and #physicsGroup > 0 then
-		anchorPhysicsGroup(physicsGroup, groupFolder)
-	end
-
-	if #groupFolder:GetChildren() == 0 then
-		groupFolder:Destroy()
-	end
-
-	ChangeHistoryService:SetWaypoint("Brush - After Paint")
-end
-
-local function eraseAt(center)
-	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
-	local container = workspace:FindFirstChild(WORKSPACE_FOLDER_NAME)
-	if not container then
-		return -- Nothing to erase
-	end
-
-	local itemsToDestroy = {} -- Use a set to prevent duplicates
-	local allChildren = container:GetDescendants()
-
-	for _, child in ipairs(allChildren) do
-		if child:IsA("BasePart") or child:IsA("Model") then
-			local part = child
-			if child:IsA("Model") then
-				part = child.PrimaryPart
-			end
-
-			if part and part.Parent then -- Check if part is not already destroyed
-				-- A simplified distance check is sufficient and more robust for 3D erase
-				if (part.Position - center).Magnitude <= radius then
-					-- For models, we want to destroy the top-level ancestor inside the container
-					local ancestorToDestroy = child
-					while ancestorToDestroy and ancestorToDestroy.Parent ~= container and ancestorToDestroy.Parent ~= workspace do
-						ancestorToDestroy = ancestorToDestroy.Parent
-					end
-					if ancestorToDestroy and ancestorToDestroy.Parent == container then
-						-- Apply erase filter if it's not empty
-						local filterActive = next(eraseFilter) ~= nil
-						if not filterActive or eraseFilter[ancestorToDestroy.Name] then
-							itemsToDestroy[ancestorToDestroy] = true -- Add to set
-						end
-					end
-				end
-			end
-		end
-	end
-
-	-- Only create a waypoint if there is something to destroy
-	if next(itemsToDestroy) ~= nil then
-		ChangeHistoryService:SetWaypoint("Brush - Before Erase")
-		for item, _ in pairs(itemsToDestroy) do
-			item:Destroy()
-		end
-
-		-- Check if the container is now empty
-		if #container:GetChildren() == 0 then
-			container:Destroy()
-		end
-
-		ChangeHistoryService:SetWaypoint("Brush - After Erase")
-	end
-end
-
-
-
-local function paintAlongLine(startPos, endPos)
-	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
-	local lineVector = endPos - startPos
-	local lineLength = lineVector.Magnitude
-	if lineLength < spacing then return end
-
-	ChangeHistoryService:SetWaypoint("Brush - Before Line")
-	local container = getWorkspaceContainer()
-
-	-- Buat folder grup untuk undo
-	local groupFolder = Instance.new("Folder")
-	groupFolder.Name = "BrushLine_" .. tostring(math.floor(os.time()))
-	groupFolder.Parent = container
-
-	-- Filter for only active assets
-	local allAssets = assetsFolder:GetChildren()
-	local activeAssets = {}
-	for _, asset in ipairs(allAssets) do
-		local isActive = assetOffsets[asset.Name .. "_active"]
-		if isActive == nil then isActive = true end
-		if isActive then
-			table.insert(activeAssets, asset)
-		end
-	end
-
-	if #activeAssets == 0 then
-		warn("Brush Tool: Tidak ada aset aktif yang dipilih untuk digambar.")
-		groupFolder:Destroy() -- Hapus folder grup kosong
-		return
-	end
-
-	local numSteps = math.floor(lineLength / spacing)
-
-	for i = 0, numSteps do
-		local t = i / numSteps
-		local pointOnLine = startPos + lineVector * t
-
-		-- Raycast down from this point to find the actual surface
-		local rayOrigin = pointOnLine + Vector3.new(0, 10, 0) -- Start raycast from above
-		local rayDir = Vector3.new(0, -20, 0) -- Raycast downwards
-
-		local params = RaycastParams.new()
-		params.FilterDescendantsInstances = { previewFolder, container }
-		params.FilterType = Enum.RaycastFilterType.Exclude
-		local result = workspace:Raycast(rayOrigin, rayDir, params)
-
-		if result then
-			-- Cek filter permukaan
-			local skip = false
-			if surfaceAngleMode == "Floor" and result.Normal.Y < 0.7 then
-				skip = true
-			elseif surfaceAngleMode == "Wall" and math.abs(result.Normal.Y) > 0.3 then
-				skip = true
-			end
-
-			if not skip then
-				local assetToPlace = getRandomWeightedAsset(activeAssets)
-				local placedAsset = placeAsset(assetToPlace, result.Position, result.Normal)
-				if placedAsset then
-					placedAsset.Parent = groupFolder
-				end
-			end
-		end
-	end
-
-	-- Hapus folder grup jika tidak ada yang ditempatkan
-	if #groupFolder:GetChildren() == 0 then
-		groupFolder:Destroy()
-	end
-
-	ChangeHistoryService:SetWaypoint("Brush - After Line")
-end
-
-local function fillArea(part)
-	if not part then return end
-
-	local density = math.max(1, math.floor(parseNumber(C.densityBox.Text, 10)))
-	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
-
-	-- Filter for only active assets
 	local allAssets = assetsFolder:GetChildren()
 	local activeAssets = {}
 	for _, asset in ipairs(allAssets) do
@@ -2112,339 +937,439 @@ local function fillArea(part)
 		if isActive == nil then isActive = true end
 		if isActive then table.insert(activeAssets, asset) end
 	end
+	if #activeAssets == 0 then groupFolder:Destroy(); return end
 
-	if #activeAssets == 0 then
-		warn("Brush Tool: Tidak ada aset aktif yang dipilih untuk mengisi.")
-		return
-	end
-
-	ChangeHistoryService:SetWaypoint("Brush - Before Fill")
-	local container = getWorkspaceContainer()
-	local groupFolder = Instance.new("Folder")
-	groupFolder.Name = "BrushFill_" .. tostring(math.floor(os.time()))
-	groupFolder.Parent = container
-
-	local placedPoints = {}
-	local partCF = part.CFrame
-	local partSize = part.Size
+	local up = surfaceNormal
+	local look = Vector3.new(1, 0, 0)
+	if math.abs(up:Dot(look)) > 0.99 then look = Vector3.new(0, 0, 1) end
+	local right = look:Cross(up).Unit
+	local look_actual = up:Cross(right).Unit
+	local planeCFrame = CFrame.fromMatrix(center, right, up, -look_actual)
+	local physicsGroup = {}
 
 	for i = 1, density do
+		local assetToClone = getRandomWeightedAsset(activeAssets)
+		if not assetToClone then break end
+		local found = false; local candidatePos = nil; local candidateNormal = surfaceNormal; local attempts = 0
+		while not found and attempts < 12 do
+			attempts = attempts + 1
+			local offset2D = randomPointInCircle(radius)
+			local spawnPos = planeCFrame:PointToWorldSpace(Vector3.new(offset2D.X, 0, offset2D.Z))
+			local rayOrigin = spawnPos + surfaceNormal * 5; local rayDir = -surfaceNormal * 10
+			local params = RaycastParams.new()
+			params.FilterDescendantsInstances = { previewFolder, container }; params.FilterType = Enum.RaycastFilterType.Exclude
+			local result = workspace:Raycast(rayOrigin, rayDir, params)
+			if result and result.Instance then
+				local isValidTarget = true
+				if maskingMode ~= "Off" and maskingValue then
+					local targetPart = result.Instance
+					if maskingMode == "Material" then isValidTarget = (targetPart.Material == maskingValue)
+					elseif maskingMode == "Color" then isValidTarget = (targetPart.Color == maskingValue)
+					elseif maskingMode == "Tag" then isValidTarget = CollectionService:HasTag(targetPart, maskingValue) end
+				end
+				if isValidTarget then
+					local posOnSurface = result.Position
+					local ok = true
+					for _, p in ipairs(placed) do if (p - posOnSurface).Magnitude < spacing then ok = false; break end end
+					if ok then found = true; candidatePos = posOnSurface; candidateNormal = result.Normal end
+				end
+			end
+		end
+		if candidatePos then
+			local placedAsset = placeAsset(assetToClone, candidatePos, candidateNormal)
+			if not physicsModeEnabled or currentMode ~= "Paint" then placedAsset.Parent = groupFolder else table.insert(physicsGroup, placedAsset) end
+			table.insert(placed, candidatePos)
+		end
+	end
+	if physicsModeEnabled and currentMode == "Paint" and #physicsGroup > 0 then anchorPhysicsGroup(physicsGroup, groupFolder) end
+	if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
+	ChangeHistoryService:SetWaypoint("Brush - After Paint")
+end
+
+updateDensityPreview = function(center, surfaceNormal)
+	densityPreviewFolder:ClearAllChildren()
+	if not center or not surfaceNormal or currentMode ~= "Paint" or not densityPreviewEnabled then return end
+
+	local radius = math.max(0.1, parseNumber(C.radiusBox[1].Text, 10))
+	local density = math.max(1, math.floor(parseNumber(C.densityBox[1].Text, 10)))
+	local spacing = math.max(0.1, parseNumber(C.spacingBox[1].Text, 1.0))
+
+	local up = surfaceNormal
+	local look = Vector3.new(1, 0, 0)
+	if math.abs(up:Dot(look)) > 0.99 then look = Vector3.new(0, 0, 1) end
+	local right = look:Cross(up).Unit
+	local look_actual = up:Cross(right).Unit
+	local planeCFrame = CFrame.fromMatrix(center, right, up, -look_actual)
+	local placed = {}
+	local container = getWorkspaceContainer()
+
+	for i = 1, density do
+		local found = false; local candidatePos = nil; local attempts = 0
+		while not found and attempts < 12 do
+			attempts = attempts + 1
+			local offset2D = randomPointInCircle(radius)
+			local spawnPos = planeCFrame:PointToWorldSpace(Vector3.new(offset2D.X, 0, offset2D.Z))
+			local rayOrigin = spawnPos + surfaceNormal * 5; local rayDir = -surfaceNormal * 10
+			local params = RaycastParams.new()
+			params.FilterDescendantsInstances = { previewFolder, container, densityPreviewFolder }; params.FilterType = Enum.RaycastFilterType.Exclude
+			local result = workspace:Raycast(rayOrigin, rayDir, params)
+			if result and result.Instance then
+				local isValidTarget = true
+				if maskingMode ~= "Off" and maskingValue then
+					local targetPart = result.Instance
+					if maskingMode == "Material" then isValidTarget = (targetPart.Material == maskingValue)
+					elseif maskingMode == "Color" then isValidTarget = (targetPart.Color == maskingValue)
+					elseif maskingMode == "Tag" then isValidTarget = CollectionService:HasTag(targetPart, maskingValue) end
+				end
+				if isValidTarget then
+					local posOnSurface = result.Position
+					local ok = true
+					for _, p in ipairs(placed) do if (p - posOnSurface).Magnitude < spacing then ok = false; break end end
+					if ok then found = true; candidatePos = posOnSurface end
+				end
+			end
+		end
+		if candidatePos then
+			local m = Instance.new("Part")
+			m.Shape = Enum.PartType.Ball; m.Size = Vector3.new(0.5,0.5,0.5); m.Anchored = true; m.CanCollide = false
+			m.Color = Theme.Warning; m.Material = Enum.Material.Neon; m.Transparency = 0.4
+			m.Position = candidatePos; m.Parent = densityPreviewFolder
+			table.insert(placed, candidatePos)
+		end
+	end
+end
+
+paintInVolume = function(center)
+	local radius = math.max(0.1, parseNumber(C.radiusBox[1].Text, 10))
+	local density = math.max(1, math.floor(parseNumber(C.densityBox[1].Text, 10)))
+	ChangeHistoryService:SetWaypoint("Brush - Before VolumePaint")
+	local container = getWorkspaceContainer()
+	local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushVolume_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
+	local allAssets = assetsFolder:GetChildren()
+	local activeAssets = {}
+	for _, asset in ipairs(allAssets) do
+		local isActive = assetOffsets[asset.Name .. "_active"]
+		if isActive == nil then isActive = true end
+		if isActive then table.insert(activeAssets, asset) end
+	end
+	if #activeAssets == 0 then groupFolder:Destroy(); return end
+	for i = 1, density do
 		local assetToPlace = getRandomWeightedAsset(activeAssets)
+		if assetToPlace then
+			local randomPoint = center + getRandomPointInSphere(radius)
+			local placedAsset = placeAsset(assetToPlace, randomPoint, nil)
+			if placedAsset then placedAsset.Parent = groupFolder end
+		end
+	end
+	if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
+	ChangeHistoryService:SetWaypoint("Brush - After VolumePaint")
+end
 
-		local foundPoint = false
-		local attempts = 0
+stampAt = function(center, surfaceNormal)
+	ChangeHistoryService:SetWaypoint("Brush - Before Stamp")
+	local container = getWorkspaceContainer()
+	local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushStamp_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
+	local allAssets = assetsFolder:GetChildren()
+	local activeAssets = {}
+	for _, asset in ipairs(allAssets) do
+		local isActive = assetOffsets[asset.Name .. "_active"]
+		if isActive == nil then isActive = true end
+		if isActive then table.insert(activeAssets, asset) end
+	end
+	if #activeAssets == 0 then groupFolder:Destroy(); return end
+	local assetToPlace = getRandomWeightedAsset(activeAssets)
+	if assetToPlace then
+		local placedAsset = placeAsset(assetToPlace, center, surfaceNormal)
+		if placedAsset then placedAsset.Parent = groupFolder end
+	end
+	if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
+	ChangeHistoryService:SetWaypoint("Brush - After Stamp")
+end
 
+eraseAt = function(center)
+	local radius = math.max(0.1, parseNumber(C.radiusBox[1].Text, 10))
+	local container = workspace:FindFirstChild(WORKSPACE_FOLDER_NAME)
+	if not container then return end
+	local itemsToDestroy = {}
+	local allChildren = container:GetDescendants()
+	for _, child in ipairs(allChildren) do
+		if child:IsA("BasePart") or child:IsA("Model") then
+			local part = child
+			if child:IsA("Model") then part = child.PrimaryPart end
+			if part and part.Parent and (part.Position - center).Magnitude <= radius then
+				local ancestorToDestroy = child
+				while ancestorToDestroy and ancestorToDestroy.Parent ~= container and ancestorToDestroy.Parent ~= workspace do ancestorToDestroy = ancestorToDestroy.Parent end
+				if ancestorToDestroy and ancestorToDestroy.Parent == container then
+					local filterActive = next(eraseFilter) ~= nil
+					if not filterActive or eraseFilter[ancestorToDestroy.Name] then itemsToDestroy[ancestorToDestroy] = true end
+				end
+			end
+		end
+	end
+	if next(itemsToDestroy) ~= nil then
+		ChangeHistoryService:SetWaypoint("Brush - Before Erase")
+		for item, _ in pairs(itemsToDestroy) do item:Destroy() end
+		if #container:GetChildren() == 0 then container:Destroy() end
+		ChangeHistoryService:SetWaypoint("Brush - After Erase")
+	end
+end
+
+fillArea = function(part)
+	if not part then return end
+	local density = math.max(1, math.floor(parseNumber(C.densityBox[1].Text, 10)))
+	local spacing = math.max(0.1, parseNumber(C.spacingBox[1].Text, 1.0))
+	local allAssets = assetsFolder:GetChildren()
+	local activeAssets = {}
+	for _, asset in ipairs(allAssets) do
+		local isActive = assetOffsets[asset.Name .. "_active"]
+		if isActive == nil then isActive = true end
+		if isActive then table.insert(activeAssets, asset) end
+	end
+	if #activeAssets == 0 then return end
+	ChangeHistoryService:SetWaypoint("Brush - Before Fill")
+	local container = getWorkspaceContainer()
+	local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushFill_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
+	local placedPoints = {}
+	local partCF = part.CFrame; local partSize = part.Size
+	for i = 1, density do
+		local assetToPlace = getRandomWeightedAsset(activeAssets)
+		local foundPoint = false; local attempts = 0
 		while not foundPoint and attempts < 20 do
 			attempts = attempts + 1
-
 			local randomX = (math.random() - 0.5) * partSize.X
 			local randomZ = (math.random() - 0.5) * partSize.Z
 			local topY = partSize.Y / 2
-
 			local pointInPartSpace = Vector3.new(randomX, topY, randomZ)
 			local worldPoint = partCF * pointInPartSpace
-
 			local rayOrigin = worldPoint + part.CFrame.UpVector * 5
 			local rayDir = -part.CFrame.UpVector * (partSize.Y + 10)
-
 			local params = RaycastParams.new()
 			params.FilterDescendantsInstances = { previewFolder, container }
 			params.FilterType = Enum.RaycastFilterType.Include
-			params.FilterDescendantsInstances = {part} -- Hanya raycast ke part target
-
+			params.FilterDescendantsInstances = {part}
 			local result = workspace:Raycast(rayOrigin, rayDir, params)
-
 			if result then
 				local isSpaced = true
-				for _, p in ipairs(placedPoints) do
-					if (result.Position - p).Magnitude < spacing then
-						isSpaced = false
-						break
-					end
-				end
-
+				for _, p in ipairs(placedPoints) do if (result.Position - p).Magnitude < spacing then isSpaced = false; break end end
 				if isSpaced then
 					local placedAsset = placeAsset(assetToPlace, result.Position, result.Normal)
-					if placedAsset then
-						placedAsset.Parent = groupFolder
-						table.insert(placedPoints, result.Position)
-					end
+					if placedAsset then placedAsset.Parent = groupFolder; table.insert(placedPoints, result.Position) end
 					foundPoint = true
 				end
 			end
 		end
 	end
-
-	if #groupFolder:GetChildren() == 0 then
-		groupFolder:Destroy()
-	end
-
+	if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
 	ChangeHistoryService:SetWaypoint("Brush - After Fill")
 end
 
-local function replaceAt(center)
+replaceAt = function(center)
 	if not sourceAsset or not targetAsset then return end
-
-	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
+	local radius = math.max(0.1, parseNumber(C.radiusBox[1].Text, 10))
 	local container = workspace:FindFirstChild(WORKSPACE_FOLDER_NAME)
 	if not container then return end
-
 	local sourceModel = assetsFolder:FindFirstChild(sourceAsset)
 	local targetModel = assetsFolder:FindFirstChild(targetAsset)
-	if not sourceModel or not targetModel then
-		warn("Brush Tool: Aset sumber atau target tidak ditemukan.")
-		return
-	end
-
+	if not sourceModel or not targetModel then return end
 	local itemsToReplace = {}
 	local allPartsInRadius = workspace:GetPartBoundsInRadius(center, radius)
-
 	for _, part in ipairs(allPartsInRadius) do
 		if part:IsDescendantOf(container) then
 			local ancestorToReplace = part
-			while ancestorToReplace and ancestorToReplace.Parent ~= container do
-				ancestorToReplace = ancestorToReplace.Parent
-			end
-			if ancestorToReplace and ancestorToReplace.Name == sourceAsset then
-				itemsToReplace[ancestorToReplace] = true
-			end
+			while ancestorToReplace and ancestorToReplace.Parent ~= container do ancestorToReplace = ancestorToReplace.Parent end
+			if ancestorToReplace and ancestorToReplace.Name == sourceAsset then itemsToReplace[ancestorToReplace] = true end
 		end
 	end
-
 	if next(itemsToReplace) ~= nil then
 		ChangeHistoryService:SetWaypoint("Brush - Before Replace")
-		local groupFolder = Instance.new("Folder")
-		groupFolder.Name = "BrushReplace_" .. tostring(math.floor(os.time()))
-		groupFolder.Parent = container
-
+		local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushReplace_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
 		for item, _ in pairs(itemsToReplace) do
 			local oldCFrame, oldSize
-			if item:IsA("Model") and item.PrimaryPart then
-				oldCFrame = item.PrimaryPart.CFrame
-				oldSize = item:GetExtentsSize()
-			elseif item:IsA("BasePart") then
-				oldCFrame = item.CFrame
-				oldSize = item.Size
-			end
-
+			if item:IsA("Model") and item.PrimaryPart then oldCFrame = item.PrimaryPart.CFrame; oldSize = item:GetExtentsSize()
+			elseif item:IsA("BasePart") then oldCFrame = item.CFrame; oldSize = item.Size end
 			if oldCFrame and oldSize then
 				item:Destroy()
 				local newAsset = targetModel:Clone()
-
 				if newAsset:IsA("Model") and newAsset.PrimaryPart then
 					local _, newSize = newAsset:GetBoundingBox()
 					local scaleFactor = oldSize.Magnitude / newSize.Magnitude
 					scaleModel(newAsset, scaleFactor)
 					newAsset:SetPrimaryPartCFrame(oldCFrame)
 				elseif newAsset:IsA("BasePart") then
-					newAsset.Size = oldSize
-					newAsset.CFrame = oldCFrame
+					newAsset.Size = oldSize; newAsset.CFrame = oldCFrame
 				end
-
 				newAsset.Parent = groupFolder
 			end
 		end
-
-		if #groupFolder:GetChildren() == 0 then
-			groupFolder:Destroy()
-		end
-
+		if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
 		ChangeHistoryService:SetWaypoint("Brush - After Replace")
 	end
 end
 
+paintAlongPath = function()
+	if #pathPoints < 2 then return end
+	ChangeHistoryService:SetWaypoint("Brush - Before Path Paint")
+	local container = getWorkspaceContainer()
+	local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushPath_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
+	local allAssets = assetsFolder:GetChildren()
+	local activeAssets = {}
+	for _, asset in ipairs(allAssets) do
+		local isActive = assetOffsets[asset.Name .. "_active"]
+		if isActive == nil then isActive = true end
+		if isActive then table.insert(activeAssets, asset) end
+	end
+	if #activeAssets == 0 then groupFolder:Destroy(); clearPath(); return end
+	local spacing = math.max(0.1, parseNumber(C.spacingBox[1].Text, 1.0))
+	local distanceSinceLastPaint = 0
+	local pointsToDraw = pathPoints
+	if pathCloseLoop and #pointsToDraw > 2 then pointsToDraw = {pointsToDraw[#pointsToDraw], unpack(pointsToDraw), pointsToDraw[1], pointsToDraw[2]} end
+	for i = 1, #pointsToDraw - 1 do
+		local p1 = pointsToDraw[i]; local p2 = pointsToDraw[i+1]
+		local p0 = pointsToDraw[i-1] or (p1 + (p1 - p2)); local p3 = pointsToDraw[i+2] or (p2 + (p2 - p1))
+		local lastPoint = p1
+		local segments = 100
+		for t_step = 1, segments do
+			local t = t_step / segments
+			local pointOnCurve = catmullRom(p0, p1, p2, p3, t)
+			local segmentLength = (pointOnCurve - lastPoint).Magnitude
+			distanceSinceLastPaint = distanceSinceLastPaint + segmentLength
+			if distanceSinceLastPaint >= spacing then
+				local assetToPlace = getRandomWeightedAsset(activeAssets)
+				local rayOrigin = pointOnCurve + Vector3.new(0, 10, 0); local rayDir = Vector3.new(0, -20, 0)
+				local params = RaycastParams.new()
+				params.FilterDescendantsInstances = { previewFolder, container, pathPreviewFolder }; params.FilterType = Enum.RaycastFilterType.Exclude
+				local result = workspace:Raycast(rayOrigin, rayDir, params)
+				if result then
+					local placedAsset = placeAsset(assetToPlace, result.Position, result.Normal)
+					if placedAsset and pathFollowPath then
+						local tangent = (catmullRom(p0, p1, p2, p3, t + 0.01) - pointOnCurve).Unit
+						local upVector = result.Normal
+						local rightVector = tangent:Cross(upVector).Unit
+						if rightVector.Magnitude < 0.9 then rightVector = (tangent + Vector3.new(0.1, 0, 0.1)):Cross(upVector).Unit end
+						local lookVector = upVector:Cross(rightVector).Unit
+						local pathRotation = CFrame.fromMatrix(Vector3.new(), rightVector, upVector, -lookVector)
+						if placedAsset:IsA("Model") and placedAsset.PrimaryPart then
+							local pos = placedAsset:GetPrimaryPartCFrame().Position
+							local _, rotX, _, _, rotZ, _ = (placedAsset:GetPrimaryPartCFrame() - pos):ToEulerAnglesXYZ()
+							placedAsset:SetPrimaryPartCFrame(CFrame.new(pos) * pathRotation * CFrame.Angles(rotX, 0, rotZ))
+						elseif placedAsset:IsA("BasePart") then
+							local pos = placedAsset.CFrame.Position
+							local _, rotX, _, _, rotZ, _ = (placedAsset.CFrame - pos):ToEulerAnglesXYZ()
+							placedAsset.CFrame = CFrame.new(pos) * pathRotation * CFrame.Angles(rotX, 0, rotZ)
+						end
+					end
+					if placedAsset then placedAsset.Parent = groupFolder end
+				end
+				distanceSinceLastPaint = 0
+			end
+			lastPoint = pointOnCurve
+		end
+	end
+	if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
+	ChangeHistoryService:SetWaypoint("Brush - After Path Paint")
+	clearPath()
+end
+
+clearPath = function() pathPoints = {}; pathPreviewFolder:ClearAllChildren() end
 updatePathPreview = function()
 	pathPreviewFolder:ClearAllChildren()
-
-	-- Draw points
 	for _, point in ipairs(pathPoints) do
 		local marker = Instance.new("Part")
-		marker.Shape = Enum.PartType.Ball
-		marker.Size = Vector3.new(0.8, 0.8, 0.8)
-		marker.Anchored = true
-		marker.CanCollide = false
-		marker.CanQuery = false
-		marker.CanTouch = false
-		marker.Color = Theme.Accent
-		marker.Material = Enum.Material.Neon
-		marker.Position = point
-		marker.Parent = pathPreviewFolder
+		marker.Shape = Enum.PartType.Ball; marker.Size = Vector3.new(0.8, 0.8, 0.8)
+		marker.Anchored = true; marker.CanCollide = false; marker.Color = Theme.Accent; marker.Material = Enum.Material.Neon
+		marker.Position = point; marker.Parent = pathPreviewFolder
 	end
-
 	local pointsToDraw = pathPoints
-	if pathCloseLoop and #pointsToDraw > 2 then
-		pointsToDraw = {pointsToDraw[#pointsToDraw], unpack(pointsToDraw), pointsToDraw[1], pointsToDraw[2]}
-	end
-
+	if pathCloseLoop and #pointsToDraw > 2 then pointsToDraw = {pointsToDraw[#pointsToDraw], unpack(pointsToDraw), pointsToDraw[1], pointsToDraw[2]} end
 	if #pointsToDraw < 2 then return end
-
-	local segments = 20 -- Number of preview parts per curve segment
-
+	local segments = 20
 	for i = 1, #pointsToDraw - 1 do
-		local p1 = pointsToDraw[i]
-		local p2 = pointsToDraw[i+1]
-		local p0 = pointsToDraw[i-1] or (p1 + (p1 - p2))
-		local p3 = pointsToDraw[i+2] or (p2 + (p2 - p1))
-
+		local p1 = pointsToDraw[i]; local p2 = pointsToDraw[i+1]
+		local p0 = pointsToDraw[i-1] or (p1 + (p1 - p2)); local p3 = pointsToDraw[i+2] or (p2 + (p2 - p1))
 		local lastPoint = p1
 		for t_step = 1, segments do
 			local t = t_step / segments
 			local pointOnCurve = catmullRom(p0, p1, p2, p3, t)
-
 			local part = Instance.new("Part")
-			part.Anchored = true
-			part.CanCollide = false
-			part.CanQuery = false
-			part.CanTouch = false
-			part.Size = Vector3.new(0.4, 0.4, (pointOnCurve - lastPoint).Magnitude)
+			part.Anchored = true; part.CanCollide = false; part.Size = Vector3.new(0.4, 0.4, (pointOnCurve - lastPoint).Magnitude)
 			part.CFrame = CFrame.new(lastPoint, pointOnCurve) * CFrame.new(0, 0, -(pointOnCurve-lastPoint).Magnitude / 2)
-			part.Color = Theme.Blue
-			part.Material = Enum.Material.Neon
-			part.Parent = pathPreviewFolder
-
+			part.Color = Theme.Accent; part.Material = Enum.Material.Neon; part.Parent = pathPreviewFolder
 			lastPoint = pointOnCurve
 		end
 	end
 end
 
-clearPath = function()
-	pathPoints = {}
-	pathPreviewFolder:ClearAllChildren()
-end
-
-clearCable = function()
-	cableStartPoint = nil
-	if cablePreviewFolder then
-		cablePreviewFolder:ClearAllChildren()
-	end
-end
-
-local function calculateCatenary(p1, p2, sag, segments)
-	local points = {}
-	local halfDist = (p1 - p2).Magnitude / 2
+calculateCatenary = function(p1, p2, sag, segments)
+	local points = {}; local halfDist = (p1 - p2).Magnitude / 2
 	if halfDist < 0.01 then return {p1, p2} end
-
-	local a = sag / (halfDist * halfDist) -- Parabolic approximation
-
+	local a = sag / (halfDist * halfDist)
 	for i = 0, segments do
-		local t = i / segments
-		local x = (t - 0.5) * (halfDist * 2)
-		local y = a * x * x
-
-		local fraction = (p2 - p1) * t
-		local point = p1 + fraction + Vector3.new(0, -y, 0)
+		local t = i / segments; local x = (t - 0.5) * (halfDist * 2); local y = a * x * x
+		local fraction = (p2 - p1) * t; local point = p1 + fraction + Vector3.new(0, -y, 0)
 		table.insert(points, point)
 	end
 	return points
 end
 
-updateCablePreview = function(startPos, endPos)
-	if not cablePreviewFolder then return end
-	cablePreviewFolder:ClearAllChildren()
-
-	local sag = math.max(0, parseNumber(C.cableSagBox.Text, 5))
-	local segments = math.max(2, math.floor(parseNumber(C.cableSegmentsBox.Text, 10)))
-	local thickness = math.max(0.1, parseNumber(C.cableThicknessBox.Text, 0.2))
-
-	local points = calculateCatenary(startPos, endPos, sag, segments)
-
-	for i = 1, #points - 1 do
-		local p1 = points[i]
-		local p2 = points[i+1]
-		local mag = (p2 - p1).Magnitude
-
-		local part = Instance.new("Part")
-		part.Shape = Enum.PartType.Cylinder
-		part.Size = Vector3.new(mag, thickness, thickness)
-		part.CFrame = CFrame.new(p1, p2) * CFrame.Angles(0, math.rad(90), 0) * CFrame.new(mag / 2, 0, 0)
-		part.Anchored = true
-		part.CanCollide = false
-		part.CanQuery = false
-		part.Material = cableMaterial
-		part.Color = cableColor
-		part.Transparency = 0.5
-		part.Parent = cablePreviewFolder
-	end
-end
-
 createCable = function(startPos, endPos)
 	ChangeHistoryService:SetWaypoint("Brush - Before Cable")
 	local container = getWorkspaceContainer()
-	local groupFolder = Instance.new("Folder")
-	groupFolder.Name = "BrushCable_" .. tostring(math.floor(os.time()))
-	groupFolder.Parent = container
-
-	local sag = math.max(0, parseNumber(C.cableSagBox.Text, 5))
-	local segments = math.max(2, math.floor(parseNumber(C.cableSegmentsBox.Text, 10)))
-	local thickness = math.max(0.1, parseNumber(C.cableThicknessBox.Text, 0.2))
-
+	local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushCable_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
+	local sag = math.max(0, parseNumber(C.cableSagBox[1].Text, 5))
+	local segments = math.max(2, math.floor(parseNumber(C.cableSegmentsBox[1].Text, 10)))
+	local thickness = math.max(0.1, parseNumber(C.cableThicknessBox[1].Text, 0.2))
 	local points = calculateCatenary(startPos, endPos, sag, segments)
-
 	for i = 1, #points - 1 do
-		local p1 = points[i]
-		local p2 = points[i+1]
-		local mag = (p2 - p1).Magnitude
-
-		local part = Instance.new("Part")
-		part.Shape = Enum.PartType.Cylinder
-		part.Size = Vector3.new(mag, thickness, thickness)
+		local p1 = points[i]; local p2 = points[i+1]; local mag = (p2 - p1).Magnitude
+		local part = Instance.new("Part"); part.Shape = Enum.PartType.Cylinder; part.Size = Vector3.new(mag, thickness, thickness)
 		part.CFrame = CFrame.new(p1, p2) * CFrame.Angles(0, math.rad(90), 0) * CFrame.new(mag / 2, 0, 0)
-		part.Anchored = true
-		part.CanCollide = true -- Cables should be collidable
-		part.Material = cableMaterial
-		part.Color = cableColor
-		part.Parent = groupFolder
+		part.Anchored = true; part.CanCollide = true; part.Material = cableMaterial; part.Color = cableColor; part.Parent = groupFolder
 	end
-
 	ChangeHistoryService:SetWaypoint("Brush - After Cable")
 	clearCable()
 end
-
-local function createBuilderStructure(startPos, endPos)
-	if not builderPostAsset or not builderSegmentAsset then
-		warn("Brush Tool: Tidak dapat membangun. Pastikan Aset Tiang dan Segmen telah ditetapkan.")
-		return
+clearCable = function() cableStartPoint = nil; if cablePreviewFolder then cablePreviewFolder:ClearAllChildren() end end
+updateCablePreview = function(startPos, endPos)
+	if not cablePreviewFolder then return end
+	cablePreviewFolder:ClearAllChildren()
+	local sag = math.max(0, parseNumber(C.cableSagBox[1].Text, 5))
+	local segments = math.max(2, math.floor(parseNumber(C.cableSegmentsBox[1].Text, 10)))
+	local thickness = math.max(0.1, parseNumber(C.cableThicknessBox[1].Text, 0.2))
+	local points = calculateCatenary(startPos, endPos, sag, segments)
+	for i = 1, #points - 1 do
+		local p1 = points[i]; local p2 = points[i+1]; local mag = (p2 - p1).Magnitude
+		local part = Instance.new("Part"); part.Shape = Enum.PartType.Cylinder
+		part.Size = Vector3.new(mag, thickness, thickness)
+		part.CFrame = CFrame.new(p1, p2) * CFrame.Angles(0, math.rad(90), 0) * CFrame.new(mag / 2, 0, 0)
+		part.Anchored = true; part.CanCollide = false; part.Material = cableMaterial; part.Color = cableColor; part.Transparency = 0.5; part.Parent = cablePreviewFolder
 	end
+end
 
+createBuilderStructure = function(startPos, endPos)
+	if not builderPostAsset or not builderSegmentAsset then return end
 	ChangeHistoryService:SetWaypoint("Brush - Before Build")
 	local container = getWorkspaceContainer()
-	local groupFolder = Instance.new("Folder")
-	groupFolder.Name = "BrushBuild_" .. tostring(math.floor(os.time()))
-	groupFolder.Parent = container
-
-	local distance = parseNumber(C.builderDistanceBox.Text, 8)
+	local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushBuild_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
+	local distance = parseNumber(C.builderDistanceBox[1].Text, 8)
 	if distance <= 0 then distance = 8 end
-	local heightOffset = parseNumber(C.builderHeightBox.Text, 0.2)
-	local stretch = C.builderStretchToggle.Text == "Ya"
-
-	local lineVector = endPos - startPos
-	local lineLength = lineVector.Magnitude
+	local heightOffset = parseNumber(C.builderHeightBox[1].Text, 0.2)
+	local stretch = (C.builderStretchToggle[1].Text == "Stretch Segment")
+	local lineVector = endPos - startPos; local lineLength = lineVector.Magnitude
 	local numPosts = math.floor(lineLength / distance) + 1
-
 	for i = 0, numPosts - 1 do
-		local t = i / (numPosts - 1)
-		if numPosts == 1 then t = 0 end
+		local t = i / (numPosts - 1); if numPosts == 1 then t = 0 end
 		local pointOnLine = startPos + lineVector * t
-
-		local rayOrigin = pointOnLine + Vector3.new(0, 10, 0)
-		local rayDir = Vector3.new(0, -20, 0)
+		local rayOrigin = pointOnLine + Vector3.new(0, 10, 0); local rayDir = Vector3.new(0, -20, 0)
 		local params = RaycastParams.new()
-		params.FilterDescendantsInstances = { previewFolder, container, builderPreviewFolder }
-		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { previewFolder, container, builderPreviewFolder }; params.FilterType = Enum.RaycastFilterType.Exclude
 		local result = workspace:Raycast(rayOrigin, rayDir, params)
-
 		if result then
 			local groundPos = result.Position + result.Normal * heightOffset
 			local postClone = builderPostAsset:Clone()
-
-			local upVector = result.Normal
-			local rightVector = lineVector.Unit
-			local lookVector = upVector:Cross(rightVector).Unit
-			rightVector = lookVector:Cross(upVector).Unit
+			local upVector = result.Normal; local rightVector = lineVector.Unit
+			local lookVector = upVector:Cross(rightVector).Unit; rightVector = lookVector:Cross(upVector).Unit
 			postClone:SetPrimaryPartCFrame(CFrame.fromMatrix(groundPos, rightVector, upVector, -lookVector))
-
 			postClone.Parent = groupFolder
-
 			if i < numPosts -1 then
 				local next_t = (i + 1) / (numPosts - 1)
 				local nextPointOnLine = startPos + lineVector * next_t
@@ -2453,84 +1378,49 @@ local function createBuilderStructure(startPos, endPos)
 				if nextResult then
 					local nextGroundPos = nextResult.Position + nextResult.Normal * heightOffset
 					local segmentClone = builderSegmentAsset:Clone()
-
 					local segmentStartPos = postClone:GetPrimaryPartCFrame().Position
 					local segmentEndPos = nextGroundPos
 					local segmentDistance = (segmentEndPos - segmentStartPos).Magnitude
 					local segmentCFrame = CFrame.new(segmentStartPos, segmentEndPos) * CFrame.new(0, 0, -segmentDistance / 2)
 					segmentClone:SetPrimaryPartCFrame(segmentCFrame)
-
 					if stretch then
 						local size = segmentClone:GetExtentsSize()
-						if size.Z > 0.01 then
-							scaleModel(segmentClone, segmentDistance / size.Z)
-						end
+						if size.Z > 0.01 then scaleModel(segmentClone, segmentDistance / size.Z) end
 					end
 					segmentClone.Parent = groupFolder
 				end
 			end
 		end
 	end
-
-	if #groupFolder:GetChildren() == 0 then
-		groupFolder:Destroy()
-	end
+	if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
 	ChangeHistoryService:SetWaypoint("Brush - After Build")
 end
 
-
-local function updateBuilderPreview(startPos, endPos)
+updateBuilderPreview = function(startPos, endPos)
 	builderPreviewFolder:ClearAllChildren()
-
-	if not builderPostAsset or not builderSegmentAsset then
-		if not builderPostAsset then warn("Brush Tool: Aset Tiang belum ditetapkan untuk Pembangun.") end
-		if not builderSegmentAsset then warn("Brush Tool: Aset Segmen belum ditetapkan untuk Pembangun.") end
-		return
-	end
-
-	local distance = parseNumber(C.builderDistanceBox.Text, 8)
+	if not builderPostAsset or not builderSegmentAsset then return end
+	local distance = parseNumber(C.builderDistanceBox[1].Text, 8)
 	if distance <= 0 then distance = 8 end
-
-	local heightOffset = parseNumber(C.builderHeightBox.Text, 0.2)
-	local stretch = C.builderStretchToggle.Text == "Ya"
-
-	local lineVector = endPos - startPos
-	local lineLength = lineVector.Magnitude
+	local heightOffset = parseNumber(C.builderHeightBox[1].Text, 0.2)
+	local stretch = (C.builderStretchToggle[1].Text == "Stretch Segment")
+	local lineVector = endPos - startPos; local lineLength = lineVector.Magnitude
 	local numPosts = math.floor(lineLength / distance) + 1
-
 	for i = 0, numPosts - 1 do
-		local t = i / (numPosts - 1)
-		if numPosts == 1 then t = 0 end -- Handle single post case
+		local t = i / (numPosts - 1); if numPosts == 1 then t = 0 end
 		local pointOnLine = startPos + lineVector * t
-
-		-- Raycast to find ground
-		local rayOrigin = pointOnLine + Vector3.new(0, 10, 0)
-		local rayDir = Vector3.new(0, -20, 0)
+		local rayOrigin = pointOnLine + Vector3.new(0, 10, 0); local rayDir = Vector3.new(0, -20, 0)
 		local params = RaycastParams.new()
-		params.FilterDescendantsInstances = { previewFolder, getWorkspaceContainer(), builderPreviewFolder }
-		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { previewFolder, getWorkspaceContainer(), builderPreviewFolder }; params.FilterType = Enum.RaycastFilterType.Exclude
 		local result = workspace:Raycast(rayOrigin, rayDir, params)
-
 		if result then
 			local groundPos = result.Position + result.Normal * heightOffset
 			local postClone = builderPostAsset:Clone()
-			for _, d in ipairs(postClone:GetDescendants()) do
-				if d:IsA("BasePart") then
-					d.Transparency = 0.7
-					d.CanCollide = false
-					d.CanQuery = false
-				end
-			end
-			local upVector = result.Normal
-			local rightVector = lineVector.Unit
-			local lookVector = upVector:Cross(rightVector).Unit
-			rightVector = lookVector:Cross(upVector).Unit
+			for _, d in ipairs(postClone:GetDescendants()) do if d:IsA("BasePart") then d.Transparency = 0.7; d.CanCollide = false end end
+			local upVector = result.Normal; local rightVector = lineVector.Unit
+			local lookVector = upVector:Cross(rightVector).Unit; rightVector = lookVector:Cross(upVector).Unit
 			postClone:SetPrimaryPartCFrame(CFrame.fromMatrix(groundPos, rightVector, upVector, -lookVector))
 			postClone.Parent = builderPreviewFolder
-
-			-- Add segment if not the last post
 			if i < numPosts - 1 then
-				-- Find next post position
 				local next_t = (i + 1) / (numPosts - 1)
 				local nextPointOnLine = startPos + lineVector * next_t
 				local nextRayOrigin = nextPointOnLine + Vector3.new(0, 10, 0)
@@ -2538,26 +1428,16 @@ local function updateBuilderPreview(startPos, endPos)
 				if nextResult then
 					local nextGroundPos = nextResult.Position + nextResult.Normal * heightOffset
 					local segmentClone = builderSegmentAsset:Clone()
-					for _, d in ipairs(segmentClone:GetDescendants()) do
-						if d:IsA("BasePart") then
-							d.Transparency = 0.7
-							d.CanCollide = false
-							d.CanQuery = false
-						end
-					end
-
+					for _, d in ipairs(segmentClone:GetDescendants()) do if d:IsA("BasePart") then d.Transparency = 0.7; d.CanCollide = false end end
 					local segmentStartPos = postClone:GetPrimaryPartCFrame().Position
 					local segmentEndPos = nextGroundPos
 					local segmentDistance = (segmentEndPos - segmentStartPos).Magnitude
-
 					local segmentCFrame = CFrame.new(segmentStartPos, segmentEndPos) * CFrame.new(0, 0, -segmentDistance / 2)
 					segmentClone:SetPrimaryPartCFrame(segmentCFrame)
-
 					if stretch then
 						local size = segmentClone:GetExtentsSize()
 						scaleModel(segmentClone, segmentDistance / size.Z)
 					end
-
 					segmentClone.Parent = builderPreviewFolder
 				end
 			end
@@ -2565,135 +1445,28 @@ local function updateBuilderPreview(startPos, endPos)
 	end
 end
 
--- Mouse and Tool Activation Logic
-updateDensityPreview = function(center, surfaceNormal)
-	densityPreviewFolder:ClearAllChildren()
-
-	if not center or not surfaceNormal or currentMode ~= "Paint" or not densityPreviewEnabled then
-		return
-	end
-
-	local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
-	local density = math.max(1, math.floor(parseNumber(C.densityBox.Text, 10)))
-	local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
-
-	local placed = {}
-
-	local up = surfaceNormal
-	local look = Vector3.new(1, 0, 0)
-	if math.abs(up:Dot(look)) > 0.99 then
-		look = Vector3.new(0, 0, 1)
-	end
-	local right = look:Cross(up).Unit
-	local look_actual = up:Cross(right).Unit
-	local planeCFrame = CFrame.fromMatrix(center, right, up, -look_actual)
-
-	local container = getWorkspaceContainer()
-
-	for i = 1, density do
-		local found = false
-		local candidatePos = nil
-		local attempts = 0
-
-		while not found and attempts < 12 do
-			attempts = attempts + 1
-			local offset2D = randomPointInCircle(radius)
-			local spawnPos = planeCFrame:PointToWorldSpace(Vector3.new(offset2D.X, 0, offset2D.Z))
-
-			local rayOrigin = spawnPos + surfaceNormal * 5
-			local rayDir = -surfaceNormal * 10
-
-			local params = RaycastParams.new()
-			params.FilterDescendantsInstances = { previewFolder, container, densityPreviewFolder, pathPreviewFolder }
-			params.FilterType = Enum.RaycastFilterType.Exclude
-			local result = workspace:Raycast(rayOrigin, rayDir, params)
-
-			if result and result.Instance then
-				local isValidTarget = true
-				if maskingMode ~= "Off" and maskingValue then
-					local targetPart = result.Instance
-					if maskingMode == "Material" then
-						isValidTarget = (targetPart.Material == maskingValue)
-					elseif maskingMode == "Color" then
-						isValidTarget = (targetPart.Color == maskingValue)
-					elseif maskingMode == "Tag" then
-						isValidTarget = CollectionService:HasTag(targetPart, maskingValue)
-					end
-				end
-
-				if isValidTarget then
-					local posOnSurface = result.Position
-					local ok = true
-					for _, p in ipairs(placed) do
-						if (p - posOnSurface).Magnitude < spacing then
-							ok = false
-							break
-						end
-					end
-					if ok then
-						found = true
-						candidatePos = posOnSurface
-					end
-				end
-			end
-		end
-
-		if candidatePos then
-			local marker = Instance.new("Part")
-			marker.Shape = Enum.PartType.Ball
-			marker.Size = Vector3.new(0.5, 0.5, 0.5)
-			marker.Anchored = true
-			marker.CanCollide = false
-			marker.CanQuery = false
-			marker.CanTouch = false
-			marker.Color = Color3.fromRGB(255, 255, 0)
-			marker.Material = Enum.Material.Neon
-			marker.Transparency = 0.6
-			marker.Position = candidatePos
-			marker.Parent = densityPreviewFolder
-			table.insert(placed, candidatePos)
-		end
-	end
-end
-
-local function updatePreview()
-	if not mouse or not previewPart then
-		return
-	end
-
-	-- Sembunyikan pratinjau kuas jika kita sedang dalam proses menggambar garis
-	if currentMode == "Line" and lineStartPoint then
-		previewPart.Parent = nil
+updatePreview = function()
+	if not mouse or not previewPart then return end
+	if currentMode == "Line" and lineStartPoint then previewPart.Parent = nil
 	elseif currentMode == "Volume" then
 		previewPart.Parent = previewFolder
-		local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
+		local radius = math.max(0.1, parseNumber(C.radiusBox[1].Text, 10))
 		local unitRay = workspace.CurrentCamera:ViewportPointToRay(mouse.X, mouse.Y)
-		local positionInSpace = unitRay.Origin + unitRay.Direction * 100 -- Default distance
-
+		local positionInSpace = unitRay.Origin + unitRay.Direction * 100
 		previewPart.Shape = Enum.PartType.Ball
 		previewPart.Size = Vector3.new(radius * 2, radius * 2, radius * 2)
 		previewPart.CFrame = CFrame.new(positionInSpace)
-		previewPart.Color = Color3.fromRGB(150, 150, 255) -- Purple for Volume
-		cyl.Parent = nil -- Sembunyikan silinder
+		previewPart.Color = Color3.fromRGB(150, 150, 255)
+		cyl.Parent = nil
 	else
-		if currentMode == "Paint" or currentMode == "Line" then
-			previewPart.Color = Color3.fromRGB(80, 255, 80) -- Green for Paint/Line
-		elseif currentMode == "Replace" then
-			previewPart.Color = Color3.fromRGB(80, 180, 255) -- Blue for Replace
-		else -- Erase
-			previewPart.Color = Color3.fromRGB(255, 80, 80) -- Red for Erase
-		end
-
+		if currentMode == "Paint" or currentMode == "Line" then previewPart.Color = Color3.fromRGB(80, 255, 80)
+		elseif currentMode == "Replace" then previewPart.Color = Color3.fromRGB(80, 180, 255)
+		else previewPart.Color = Color3.fromRGB(255, 80, 80) end
 		previewPart.Shape = Enum.PartType.Cylinder
-		if cyl.Parent ~= previewPart then cyl.Parent = previewPart end
-
-
-		local radius = math.max(0.1, parseNumber(C.radiusBox.Text, 10))
+		local radius = math.max(0.1, parseNumber(C.radiusBox[1].Text, 10))
 		local surfacePos, normal = findSurfacePositionAndNormal()
-
 		if not surfacePos or not normal or currentMode == "Line" or currentMode == "Cable" then
-			previewPart.Parent = nil -- Sembunyikan untuk mode Garis (sebelum titik pertama) dan Isi
-			updateDensityPreview(nil, nil)
+			previewPart.Parent = nil
 		else
 			previewPart.Parent = previewFolder
 			local pos = surfacePos
@@ -2701,14 +1474,11 @@ local function updatePreview()
 			if math.abs(look:Dot(normal)) > 0.99 then look = Vector3.new(0, 0, 1) end
 			local right = look:Cross(normal).Unit
 			local lookActual = normal:Cross(right).Unit
-			previewPart.CFrame = CFrame.fromMatrix(pos + normal * 0.05, right, normal, -lookActual)
+			previewPart.CFrame = CFrame.fromMatrix(pos + normal * 0.05, normal, right, lookActual)
 			previewPart.Size = Vector3.new(0.02, radius*2, radius*2)
-			--cyl.Scale = Vector3.new(radius * 2, 0.02, radius * 2)
 			updateDensityPreview(pos, normal)
 		end
 	end
-
-	-- Update pratinjau garis
 	if currentMode == "Line" and lineStartPoint and linePreviewPart then
 		local endPoint, _ = findSurfacePositionAndNormal()
 		if endPoint then
@@ -2716,148 +1486,154 @@ local function updatePreview()
 			local mag = (endPoint - lineStartPoint).Magnitude
 			linePreviewPart.Size = Vector3.new(0.2, 0.2, mag)
 			linePreviewPart.CFrame = CFrame.new(lineStartPoint, endPoint) * CFrame.new(0, 0, -mag/2)
-		else
-			linePreviewPart.Parent = nil
-		end
-	elseif linePreviewPart then
-		linePreviewPart.Parent = nil -- Sembunyikan jika tidak dalam mode garis
-	end
-
-	-- Update cable preview
+		else linePreviewPart.Parent = nil end
+	elseif linePreviewPart then linePreviewPart.Parent = nil end
 	if currentMode == "Cable" and cableStartPoint then
 		local endPoint, _ = findSurfacePositionAndNormal()
-		if endPoint then
-			updateCablePreview(cableStartPoint, endPoint)
-		end
-	elseif cablePreviewFolder then
-		clearCable()
-	end
+		if endPoint then updateCablePreview(cableStartPoint, endPoint) end
+	elseif cablePreviewFolder then clearCable() end
 end
 
-local function handlePaint(center, normal)
-	if currentMode == "Paint" then
-		paintAt(center, normal)
-	elseif currentMode == "Stamp" then
-		stampAt(center, normal)
-	elseif currentMode == "Volume" then
-		local unitRay = workspace.CurrentCamera:ViewportPointToRay(mouse.X, mouse.Y)
-		local positionInSpace = unitRay.Origin + unitRay.Direction * 100 -- Default distance
-		paintInVolume(positionInSpace)
-	elseif currentMode == "Erase" then
-		eraseAt(center)
-	elseif currentMode == "Replace" then
-		replaceAt(center)
+local function paintAlongLine(startPos, endPos)
+	local spacing = math.max(0.1, parseNumber(C.spacingBox[1].Text, 1.0))
+	local lineVector = endPos - startPos; local lineLength = lineVector.Magnitude
+	if lineLength < spacing then return end
+	ChangeHistoryService:SetWaypoint("Brush - Before Line")
+	local container = getWorkspaceContainer()
+	local groupFolder = Instance.new("Folder"); groupFolder.Name = "BrushLine_" .. tostring(math.floor(os.time())); groupFolder.Parent = container
+	local allAssets = assetsFolder:GetChildren()
+	local activeAssets = {}
+	for _, asset in ipairs(allAssets) do
+		local isActive = assetOffsets[asset.Name .. "_active"]
+		if isActive == nil then isActive = true end
+		if isActive then table.insert(activeAssets, asset) end
 	end
-	lastPaintPosition = center
-end
-
-local function onMove()
-	if not active then
-		return
-	end
-
-	updatePreview()
-
-	if currentMode == "Builder" and builderStartPoint then
-		local endPoint, _ = findSurfacePositionAndNormal()
-		if endPoint then
-			updateBuilderPreview(builderStartPoint, endPoint)
-		end
-	elseif isPainting and (currentMode == "Paint" or currentMode == "Erase" or currentMode == "Replace") then
-		local center, normal = findSurfacePositionAndNormal()
-		if center and normal and lastPaintPosition then
-			local spacing = math.max(0.1, parseNumber(C.spacingBox.Text, 1.0))
-			if (center - lastPaintPosition).Magnitude >= spacing then
-				handlePaint(center, normal)
+	if #activeAssets == 0 then groupFolder:Destroy(); return end
+	local numSteps = math.floor(lineLength / spacing)
+	for i = 0, numSteps do
+		local t = i / numSteps
+		local pointOnLine = startPos + lineVector * t
+		local rayOrigin = pointOnLine + Vector3.new(0, 10, 0); local rayDir = Vector3.new(0, -20, 0)
+		local params = RaycastParams.new()
+		params.FilterDescendantsInstances = { previewFolder, container }; params.FilterType = Enum.RaycastFilterType.Exclude
+		local result = workspace:Raycast(rayOrigin, rayDir, params)
+		if result then
+			local skip = false
+			if surfaceAngleMode == "Floor" and result.Normal.Y < 0.7 then skip = true
+			elseif surfaceAngleMode == "Wall" and math.abs(result.Normal.Y) > 0.3 then skip = true end
+			if not skip then
+				local assetToPlace = getRandomWeightedAsset(activeAssets)
+				local placedAsset = placeAsset(assetToPlace, result.Position, result.Normal)
+				if placedAsset then placedAsset.Parent = groupFolder end
 			end
 		end
 	end
+	if #groupFolder:GetChildren() == 0 then groupFolder:Destroy() end
+	ChangeHistoryService:SetWaypoint("Brush - After Line")
 end
 
-local function onDown()
-	if not active or not mouse then
-		return
+-- Main Connection Logic
+
+C.applyPathBtn[1].MouseButton1Click:Connect(paintAlongPath)
+C.clearPathBtn[1].MouseButton1Click:Connect(clearPath)
+C.fillBtn[1].MouseButton1Click:Connect(function() if C.fillBtn[1].Text ~= "SELECT TARGET VOLUME" then fillArea(partToFill) end end)
+C.randomizeBtn[1].MouseButton1Click:Connect(function()
+	C.scaleMinBox[1].Text = string.format("%.2f", randFloat(0.5, 1.0)); C.scaleMaxBox[1].Text = string.format("%.2f", randFloat(1.1, 2.5))
+	C.rotXMinBox[1].Text = tostring(math.random(0, 45)); C.rotXMaxBox[1].Text = tostring(math.random(45, 90))
+	C.rotZMinBox[1].Text = tostring(math.random(0, 45)); C.rotZMaxBox[1].Text = tostring(math.random(45, 90))
+end)
+
+-- Helper for UI Updates
+updateModeButtonsUI = function()
+	for mode, controls in pairs(C.modeButtons) do
+		if mode == currentMode then
+			controls.Stroke.Color = Theme.Accent
+			controls.Button.TextColor3 = Theme.Accent
+			controls.Stroke.Thickness = 2
+		else
+			controls.Stroke.Color = Theme.Border
+			controls.Button.TextColor3 = Theme.Text
+			controls.Stroke.Thickness = 1
+		end
 	end
 
-	local center, normal = findSurfacePositionAndNormal()
-	if not center or not normal then return end
+	-- Context visibility
+	C.pathFrame.Visible = (currentMode == "Path")
+	C.builderFrame.Visible = (currentMode == "Builder")
+	C.cableFrame.Visible = (currentMode == "Cable")
+	C.fillFrame.Visible = (currentMode == "Fill")
 
-	if currentMode == "Line" then
-		if not lineStartPoint then
-			lineStartPoint = center
-		else
-			paintAlongLine(lineStartPoint, center)
-			lineStartPoint = nil -- Reset for the next line
-		end
-	elseif currentMode == "Builder" then
-		if not builderStartPoint then
-			builderStartPoint = center
-		else
-			createBuilderStructure(builderStartPoint, center)
-			builderStartPoint = nil -- Reset for the next build
-			builderPreviewFolder:ClearAllChildren()
-		end
-	elseif currentMode == "Path" then
-		table.insert(pathPoints, center)
-		updatePathPreview()
-	elseif currentMode == "Cable" then
-		if not cableStartPoint then
-			cableStartPoint = center
-		else
-			createCable(cableStartPoint, center)
-			cableStartPoint = nil -- Reset for the next cable
-		end
-	else -- Paint, Erase, Replace, or Stamp
-		if currentMode == "Paint" or currentMode == "Erase" or currentMode == "Replace" then
-			isPainting = true
-		end
-		handlePaint(center, normal)
-	end
+	-- Input visibility
+	local showBrush = (currentMode == "Paint" or currentMode == "Erase" or currentMode == "Replace" or currentMode == "Volume" or currentMode == "Fill")
+	local showDensity = (currentMode == "Paint" or currentMode == "Volume" or currentMode == "Fill")
+	local showSpacing = (currentMode == "Paint" or currentMode == "Line" or currentMode == "Path")
+
+	C.radiusBox[2].Visible = showBrush
+	C.densityBox[2].Visible = showDensity
+	C.spacingBox[2].Visible = showSpacing
 end
 
-local function onUp()
-	if currentMode == "Paint" or currentMode == "Erase" or currentMode == "Replace" then
-		isPainting = false
-		lastPaintPosition = nil
-	end
-end
-
-updateFillSelection = function()
-	if currentMode ~= "Fill" then
-		partToFill = nil
-		fillSelectionBox.Adornee = nil
-		C.fillBtn.Active = false
-		C.fillBtn.Text = "Pilih 1 Part untuk Diisi"
-		C.fillBtn.BackgroundColor3 = Theme.Red
-		return
-	end
-
-	local selection = Selection:Get()
-	if #selection == 1 and selection[1]:IsA("BasePart") then
-		partToFill = selection[1]
-		fillSelectionBox.Adornee = partToFill
-		C.fillBtn.Active = true
-		C.fillBtn.Text = "Isi Part: " .. partToFill.Name
-		C.fillBtn.BackgroundColor3 = Theme.Green
+updateToggle = function(btn, inner, label, state, activeText, inactiveText)
+	inner.Visible = state
+	if state then
+		inner.BackgroundColor3 = Theme.Accent
+		if activeText then label.Text = activeText end
 	else
-		partToFill = nil
-		fillSelectionBox.Adornee = nil
-		C.fillBtn.Active = false
-		C.fillBtn.Text = "Pilih 1 Part untuk Diisi"
-		C.fillBtn.BackgroundColor3 = Theme.Red
+		if inactiveText then label.Text = inactiveText end
 	end
 end
 
-local function randomizeSettings()
-	C.scaleMinBox.Text = string.format("%.2f", randFloat(0.5, 1.0))
-	C.scaleMaxBox.Text = string.format("%.2f", randFloat(1.1, 2.5))
-	C.rotXMinBox.Text = tostring(math.random(0, 45))
-	C.rotXMaxBox.Text = tostring(math.random(45, 90))
-	C.rotZMinBox.Text = tostring(math.random(0, 45))
-	C.rotZMaxBox.Text = tostring(math.random(45, 90))
+updateAllToggles = function()
+	updateToggle(C.pathFollowPathBtn[1], C.pathFollowPathBtn[2], C.pathFollowPathBtn[3], pathFollowPath)
+	updateToggle(C.pathCloseLoopBtn[1], C.pathCloseLoopBtn[2], C.pathCloseLoopBtn[3], pathCloseLoop)
+	updateToggle(C.builderStretchToggle[1], C.builderStretchToggle[2], C.builderStretchToggle[3], C.builderStretchToggle[1].Text == "Stretch Segment") -- Logic simplified
+
+	local alignState = false
+	local activeState = false
+	if selectedAssetInUI then
+		alignState = assetOffsets[selectedAssetInUI .. "_align"]
+		activeState = assetOffsets[selectedAssetInUI .. "_active"] ~= false
+	end
+
+	updateToggle(C.assetSettingsAlign[1], C.assetSettingsAlign[2], C.assetSettingsAlign[3], alignState)
+	updateToggle(C.assetSettingsActive[1], C.assetSettingsActive[2], C.assetSettingsActive[3], activeState)
+
+	updateToggle(C.physicsModeBtn[1], C.physicsModeBtn[2], C.physicsModeBtn[3], physicsModeEnabled)
+	updateToggle(C.snapToGridBtn[1], C.snapToGridBtn[2], C.snapToGridBtn[3], snapToGridEnabled)
+	updateToggle(C.avoidOverlapBtn[1], C.avoidOverlapBtn[2], C.avoidOverlapBtn[3], avoidOverlap)
+	updateToggle(C.densityPreviewBtn[1], C.densityPreviewBtn[2], C.densityPreviewBtn[3], densityPreviewEnabled)
+	updateToggle(C.autoTerrainPaintBtn[1], C.autoTerrainPaintBtn[2], C.autoTerrainPaintBtn[3], autoTerrainPaint)
+
+	local saText = "Surface Lock: OFF"
+	if surfaceAngleMode == "Floor" then saText = "Surface Lock: FLOOR"
+	elseif surfaceAngleMode == "Wall" then saText = "Surface Lock: WALL" end
+	updateToggle(C.surfaceAngleBtn[1], C.surfaceAngleBtn[2], C.surfaceAngleBtn[3], surfaceAngleMode ~= "Off", saText, saText)
 end
 
-local function addSelectedAssets()
+updateMaskingUI = function()
+	C.maskingModeBtn[1].Text = "MASK: " .. string.upper(maskingMode)
+	if maskingMode == "Off" then
+		C.maskingTargetLabel.Text = "TARGET: NONE"
+		C.maskingTargetLabel.TextColor3 = Theme.TextDim
+		C.pickMaskTargetBtn[1].Visible = false
+	else
+		C.pickMaskTargetBtn[1].Visible = true
+		if maskingValue then
+			C.maskingTargetLabel.TextColor3 = Theme.Success
+			if maskingMode == "Material" then C.maskingTargetLabel.Text = "TARGET: " .. maskingValue.Name
+			elseif maskingMode == "Tag" then C.maskingTargetLabel.Text = "TARGET: " .. tostring(maskingValue)
+			elseif maskingMode == "Color" then
+				local c = maskingValue
+				C.maskingTargetLabel.Text = string.format("TARGET: %.2f, %.2f, %.2f", c.r, c.g, c.b)
+			end
+		else
+			C.maskingTargetLabel.Text = "TARGET: NONE"
+			C.maskingTargetLabel.TextColor3 = Theme.Warning
+		end
+	end
+end
+
+addSelectedAssets = function()
 	local selection = Selection:Get()
 	for _, v in ipairs(selection) do
 		if (v:IsA("Model") or v:IsA("BasePart")) and not assetsFolder:FindFirstChild(v.Name) then
@@ -2868,437 +1644,399 @@ local function addSelectedAssets()
 	updateAssetUIList()
 end
 
-local function clearAssetList()
+clearAssetList = function()
 	assetsFolder:ClearAllChildren()
 	assetOffsets = {}
-	persistOffsets()
 	updateAssetUIList()
 end
 
+-- Asset UI Logic
+local function setupViewport(viewport, asset, zoomScale)
+	zoomScale = zoomScale or 1.0
+	for _, c in ipairs(viewport:GetChildren()) do c:Destroy() end
+	local cam = Instance.new("Camera"); cam.Parent = viewport; viewport.CurrentCamera = cam
+	local worldModel = Instance.new("WorldModel"); worldModel.Parent = viewport
+	local c = asset:Clone(); c.Parent = worldModel
+	local cf, size = c:GetBoundingBox()
+	local maxDim = math.max(size.X, size.Y, size.Z)
+	local dist = (maxDim / 2) / math.tan(math.rad(35))
+	dist = (dist * 1.2) / zoomScale
+	cam.CFrame = CFrame.new(cf.Position + Vector3.new(dist, dist*0.8, dist), cf.Position)
+end
 
-local function activate()
-	if active then
+updateAssetUIList = function()
+	for _, v in pairs(C.assetListFrame:GetChildren()) do if v:IsA("GuiObject") then v:Destroy() end end
+	local children = assetsFolder:GetChildren()
+
+	for _, asset in ipairs(children) do
+		local btn = Instance.new("TextButton")
+		btn.BackgroundColor3 = Theme.Panel
+		btn.Text = ""
+		btn.Parent = C.assetListFrame
+		local stroke = Instance.new("UIStroke"); stroke.Color = Theme.Border; stroke.Parent = btn
+
+		local vp = Instance.new("ViewportFrame")
+		vp.Size = UDim2.new(1, -8, 0, 60)
+		vp.Position = UDim2.new(0, 4, 0, 4)
+		vp.BackgroundTransparency = 1
+		vp.Parent = btn
+
+		-- Zoom Controls
+		local zoomKey = asset.Name .. "_previewZoom"
+		local zoom = assetOffsets[zoomKey] or 1.0
+
+		pcall(function() setupViewport(vp, asset, zoom) end)
+
+		local function updateZoom(delta)
+			zoom = math.clamp(zoom + delta, 0.5, 5.0)
+			assetOffsets[zoomKey] = zoom
+			persistOffsets()
+			pcall(function() setupViewport(vp, asset, zoom) end)
+		end
+
+		local plusBtn = Instance.new("TextButton")
+		plusBtn.Size = UDim2.new(0, 20, 0, 20)
+		plusBtn.Position = UDim2.new(1, -24, 0, 4)
+		plusBtn.Text = "+"
+		plusBtn.BackgroundColor3 = Theme.Background
+		plusBtn.TextColor3 = Theme.Text
+		plusBtn.Parent = btn
+		plusBtn.MouseButton1Click:Connect(function() updateZoom(0.1) end)
+
+		local minusBtn = Instance.new("TextButton")
+		minusBtn.Size = UDim2.new(0, 20, 0, 20)
+		minusBtn.Position = UDim2.new(1, -24, 0, 28)
+		minusBtn.Text = "-"
+		minusBtn.BackgroundColor3 = Theme.Background
+		minusBtn.TextColor3 = Theme.Text
+		minusBtn.Parent = btn
+		minusBtn.MouseButton1Click:Connect(function() updateZoom(-0.1) end)
+
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(1, -8, 0, 20)
+		lbl.Position = UDim2.new(0, 4, 1, -24)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = asset.Name
+		lbl.Font = Theme.FontTech
+		lbl.TextSize = 11
+		lbl.TextColor3 = Theme.Text
+		lbl.TextTruncate = Enum.TextTruncate.AtEnd
+		lbl.Parent = btn
+
+		btn.MouseButton1Click:Connect(function()
+			if currentMode == "Builder" and builderSlotToAssign then
+				if builderSlotToAssign == "Post" then builderPostAsset = asset; C.builderPostSlot[1].Text = "POST: "..asset.Name
+				elseif builderSlotToAssign == "Segment" then builderSegmentAsset = asset; C.builderSegmentSlot[1].Text = "SEG: "..asset.Name end
+				builderSlotToAssign = nil
+			else
+				selectedAssetInUI = asset.Name
+				C.assetSettingsFrame.Visible = true
+				C.assetSettingsName.Text = "SELECTED: " .. string.upper(asset.Name)
+				C.assetSettingsOffsetY[1].Text = tostring(assetOffsets[asset.Name] or 0)
+				C.assetSettingsWeight[1].Text = tostring(assetOffsets[asset.Name.."_weight"] or 1)
+				updateAllToggles()
+				updateAssetUIList() -- Redraw for highlight
+			end
+		end)
+
+		if selectedAssetInUI == asset.Name then stroke.Color = Theme.Accent; stroke.Thickness = 2 end
+	end
+end
+
+updateFillSelection = function()
+	if currentMode ~= "Fill" then
+		partToFill = nil
+		if fillSelectionBox then fillSelectionBox.Adornee = nil end
+		C.fillBtn[1].Text = "SELECT TARGET VOLUME"
+		C.fillBtn[1].TextColor3 = Theme.Text
 		return
 	end
-	active = true
+	local selection = Selection:Get()
+	if #selection == 1 and selection[1]:IsA("BasePart") then
+		partToFill = selection[1]
+		if not fillSelectionBox then
+			fillSelectionBox = Instance.new("SelectionBox")
+			fillSelectionBox.Color3 = Theme.Accent
+			fillSelectionBox.LineThickness = 0.1
+			fillSelectionBox.Parent = previewFolder
+		end
+		fillSelectionBox.Adornee = partToFill
+		C.fillBtn[1].Text = "FILL: " .. partToFill.Name
+		C.fillBtn[1].TextColor3 = Theme.Success
+	else
+		partToFill = nil
+		if fillSelectionBox then fillSelectionBox.Adornee = nil end
+		C.fillBtn[1].Text = "SELECT TARGET VOLUME"
+		C.fillBtn[1].TextColor3 = Theme.Text
+	end
+end
 
-	-- Create preview part
+setMode = function(newMode)
+	if currentMode == newMode then return end
+
+	if currentMode == "Replace" then sourceAsset = nil; targetAsset = nil end
+	if currentMode == "Erase" and newMode ~= "Erase" then eraseFilter = {} end
+	lineStartPoint = nil
+	if linePreviewPart then linePreviewPart.Parent = nil end
+	if newMode ~= "Path" then clearPath() end
+	if newMode ~= "Cable" then clearCable() end
+	if newMode ~= "Builder" then builderStartPoint = nil; builderPreviewFolder:ClearAllChildren() end
+
+	currentMode = newMode
+	updateModeButtonsUI()
+	updatePreview()
+	updateFillSelection()
+end
+
+-- Event Handling & Activation
+
+local function onMove()
+	if not active then return end
+	updatePreview()
+	if currentMode == "Builder" and builderStartPoint then
+		local unitRay = workspace.CurrentCamera:ViewportPointToRay(mouse.X, mouse.Y)
+		local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {previewFolder, getWorkspaceContainer(), builderPreviewFolder}
+		local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, params)
+		if result then updateBuilderPreview(builderStartPoint, result.Position) end
+	elseif isPainting then
+		local unitRay = workspace.CurrentCamera:ViewportPointToRay(mouse.X, mouse.Y)
+		local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {previewFolder, getWorkspaceContainer(), densityPreviewFolder, pathPreviewFolder, cablePreviewFolder}
+		local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, params)
+		if result and lastPaintPosition then
+			local spacing = math.max(0.1, parseNumber(C.spacingBox[1].Text, 1.0))
+			if (result.Position - lastPaintPosition).Magnitude >= spacing then
+				if currentMode == "Paint" then paintAt(result.Position, result.Normal)
+				elseif currentMode == "Erase" then eraseAt(result.Position)
+				elseif currentMode == "Replace" then replaceAt(result.Position)
+				end
+				lastPaintPosition = result.Position
+			end
+		end
+	end
+end
+
+local function onDown()
+	if not active or not mouse then return end
+	local center, normal, _ = findSurfacePositionAndNormal()
+
+	-- For Volume Mode, we don't need a surface
+	if currentMode == "Volume" then
+		local unitRay = workspace.CurrentCamera:ViewportPointToRay(mouse.X, mouse.Y)
+		local pos = unitRay.Origin + unitRay.Direction * 100
+		paintInVolume(pos)
+		return
+	end
+
+	if not center then return end
+
+	if currentMode == "Line" then
+		if not lineStartPoint then lineStartPoint = center
+		else paintAlongLine(lineStartPoint, center); lineStartPoint = nil end
+	elseif currentMode == "Builder" then
+		if not builderStartPoint then builderStartPoint = center
+		else createBuilderStructure(builderStartPoint, center); builderStartPoint = nil; builderPreviewFolder:ClearAllChildren() end
+	elseif currentMode == "Path" then
+		table.insert(pathPoints, center); updatePathPreview()
+	elseif currentMode == "Cable" then
+		if not cableStartPoint then cableStartPoint = center
+		else createCable(cableStartPoint, center); cableStartPoint = nil end
+	elseif currentMode == "Paint" or currentMode == "Stamp" or currentMode == "Erase" or currentMode == "Replace" then
+		if currentMode == "Paint" then paintAt(center, normal)
+		elseif currentMode == "Stamp" then stampAt(center, normal)
+		elseif currentMode == "Erase" then eraseAt(center)
+		elseif currentMode == "Replace" then replaceAt(center)
+		end
+
+		if currentMode ~= "Stamp" then
+			isPainting = true
+			lastPaintPosition = center
+		end
+	end
+end
+
+local function onUp()
+	isPainting = false
+	lastPaintPosition = nil
+end
+
+local function updateOnOffButtonUI()
+	if active then
+		C.activationBtn.Text = "SYSTEM: ONLINE"
+		C.activationBtn.TextColor3 = Theme.Background
+		C.activationBtn.BackgroundColor3 = Theme.Success
+		statusIndicator.BackgroundColor3 = Theme.Success
+		titleLabel.Text = "SYSTEM: ONLINE // READY"
+		titleLabel.TextColor3 = Theme.Success
+	else
+		C.activationBtn.Text = "ACTIVATE"
+		C.activationBtn.TextColor3 = Theme.Text
+		C.activationBtn.BackgroundColor3 = Theme.Background
+		statusIndicator.BackgroundColor3 = Theme.Destructive
+		titleLabel.Text = "SYSTEM: STANDBY"
+		titleLabel.TextColor3 = Theme.Text
+	end
+end
+
+activate = function()
+	if active then return end
+	active = true
 	previewPart = Instance.new("Part")
 	previewPart.Name = "BrushRadiusPreview"
-	previewPart.Anchored = true
-	previewPart.CanCollide = false
-	previewPart.CanQuery = false
-	previewPart.CanTouch = false
-	previewPart.Transparency = 0.6
-	previewPart.Size = Vector3.new(1, 1, 1)
-	previewPart.Material = Enum.Material.Neon
-
-	cyl = Instance.new("CylinderMesh")
-	cyl.Scale = Vector3.new(1, 0.02, 1)
-	cyl.Parent = previewPart
-
-	-- Create line preview part
+	previewPart.Anchored = true; previewPart.CanCollide = false; previewPart.Transparency = 0.6; previewPart.Material = Enum.Material.Neon
 	linePreviewPart = Instance.new("Part")
 	linePreviewPart.Name = "BrushLinePreview"
-	linePreviewPart.Anchored = true
-	linePreviewPart.CanCollide = false
-	linePreviewPart.CanQuery = false
-	linePreviewPart.CanTouch = false
-	linePreviewPart.Transparency = 0.5
-	linePreviewPart.BrickColor = BrickColor.new("Institutional white")
-	linePreviewPart.Material = Enum.Material.Neon
-	linePreviewPart.Size = Vector3.new(0.2, 0.2, 1) -- Length will be set by CFrame
+	linePreviewPart.Anchored = true; linePreviewPart.CanCollide = false; linePreviewPart.Transparency = 0.5; linePreviewPart.Material = Enum.Material.Neon
 
 	plugin:Activate(true)
 	mouse = plugin:GetMouse()
 	moveConn = mouse.Move:Connect(onMove)
 	downConn = mouse.Button1Down:Connect(onDown)
 	upConn = mouse.Button1Up:Connect(onUp)
+
 	updatePreview()
-	updateFillSelection() -- Sync fill selection state
+	updateFillSelection()
 	toolbarBtn:SetActive(true)
 	updateOnOffButtonUI()
 end
 
-local function deactivate()
-	if not active then
-		return
-	end
+deactivate = function()
+	if not active then return end
 	active = false
-
-	if moveConn then moveConn:Disconnect() moveConn = nil end
-	if downConn then downConn:Disconnect() downConn = nil end
-	if upConn then upConn:Disconnect() upConn = nil end
-
-	isPainting = false -- Reset state on deactivate
-	lastPaintPosition = nil
-	lineStartPoint = nil
-	clearPath()
-	clearCable()
-	mouse = nil
-
-	if previewPart then
-		previewPart:Destroy()
-		previewPart = nil
-		cyl = nil
-	end
-
-	if linePreviewPart then
-		linePreviewPart:Destroy()
-		linePreviewPart = nil
-	end
-
-	if fillSelectionBox then
-		fillSelectionBox.Adornee = nil
-	end
-
+	if moveConn then moveConn:Disconnect(); moveConn = nil end
+	if downConn then downConn:Disconnect(); downConn = nil end
+	if upConn then upConn:Disconnect(); upConn = nil end
+	isPainting = false; lastPaintPosition = nil; lineStartPoint = nil
+	clearPath(); clearCable(); mouse = nil
+	if previewPart then previewPart:Destroy(); previewPart = nil; cyl = nil end
+	if linePreviewPart then linePreviewPart:Destroy(); linePreviewPart = nil end
+	if fillSelectionBox then fillSelectionBox.Adornee = nil end
 	toolbarBtn:SetActive(false)
 	updateOnOffButtonUI()
 end
 
-local function toggle()
-	if active then
-		deactivate()
-	else
-		activate()
-	end
-end
-
-
--- Connect Global Button Events
-toolbarBtn.Click:Connect(function()
-	widget.Enabled = not widget.Enabled
-end)
-widget.Enabled = false
-
--- Initialize SelectionBox for Fill tool
-fillSelectionBox = Instance.new("SelectionBox")
-fillSelectionBox.Color3 = Color3.fromRGB(0, 255, 127) -- Spring Green
-fillSelectionBox.LineThickness = 0.2
-fillSelectionBox.Parent = previewFolder -- Store it here to keep workspace clean
-
-plugin.Unloading:Connect(function()
-	if previewFolder and previewFolder.Parent then
-		previewFolder:Destroy()
-	end
-	if pathPreviewFolder and pathPreviewFolder.Parent then
-		pathPreviewFolder:Destroy()
-	end
-	if densityPreviewFolder and densityPreviewFolder.Parent then
-		densityPreviewFolder:Destroy()
-	end
-	if builderPreviewFolder and builderPreviewFolder.Parent then
-		builderPreviewFolder:Destroy()
-	end
-	if linePreviewPart then
-		linePreviewPart:Destroy()
-	end
-	if fillSelectionBox then
-		fillSelectionBox:Destroy()
-	end
-end)
-
-Selection.SelectionChanged:Connect(updateFillSelection)
-
--- Initial Load and Print
-loadOffsets()
-updateAssetUIList()
-updateModeButtonsUI()
-updateToggleButtonsUI()
-updateMaskingUI()
-populateMaterialPicker()
-
-local function setMode(newMode)
-	if currentMode == newMode then return end
-
-	-- Reset state dari mode sebelumnya
-	if currentMode == "Replace" then
-		sourceAsset = nil
-		targetAsset = nil
-	end
-	if currentMode == "Erase" and newMode ~= "Erase" then
-		eraseFilter = {}
-	end
-
-	lineStartPoint = nil -- Reset line tool on mode change
-	if linePreviewPart then linePreviewPart.Parent = nil end
-
-	if newMode ~= "Path" then
-		clearPath()
-	end
-	if newMode ~= "Cable" then
-		clearCable()
-	end
-	if newMode ~= "Builder" then
-		builderStartPoint = nil
-		builderPreviewFolder:ClearAllChildren()
-	end
-
-	currentMode = newMode
-
-	-- Update UI
-	updateModeButtonsUI()
-	updateAssetSettingsPanel()
-	updateAssetUIList()
-	updatePreview()
-	updateFillSelection()
-
-	-- Handle visibility of mode-specific controls
-	-- Hide all contextual controls first
-	for _, child in ipairs(C.modeSettingsContent:GetChildren()) do
-		if child:IsA("GuiObject") then
-			child.Visible = false
-		end
-	end
-
-	-- Show controls based on the new mode
-	if newMode == "Paint" or newMode == "Erase" or newMode == "Replace" or newMode == "Volume" then
-		C.radiusRow.Visible = true
-	end
-	if newMode == "Paint" or newMode == "Fill" or newMode == "Volume" then
-		C.densityRow.Visible = true
-	end
-	if newMode == "Paint" or newMode == "Line" or newMode == "Path" then
-		C.spacingRow.Visible = true
-	end
-	if newMode == "Fill" then
-		C.fillBtn.Visible = true
-	end
-	if newMode == "Path" then
-		C.pathActionsFrame.Visible = true
-	end
-	if newMode == "Cable" then
-		C.cableSagRow.Visible = true
-		C.cableSegmentsRow.Visible = true
-		C.cableThicknessRow.Visible = true
-		C.cableColorRow.Visible = true
-		C.cableMaterialRow.Visible = true
-	end
-
-	-- Show/hide the builder settings panel
-	C.builderSettingsSection.Visible = (newMode == "Builder")
-end
-
 -- Final UI Connections
-C.onOffBtn.MouseButton1Click:Connect(toggle)
 
-for modeName, button in pairs(C.modeButtons) do
-	button.MouseButton1Click:Connect(function()
-		setMode(modeName)
-	end)
+C.activationBtn.MouseButton1Click:Connect(function()
+	if active then deactivate() else activate() end
+end)
+
+for mode, controls in pairs(C.modeButtons) do
+	controls.Button.MouseButton1Click:Connect(function() setMode(mode) end)
 end
 
-C.builderPostSlot.MouseButton1Click:Connect(function()
-	builderSlotToAssign = "Post"
-	updateAssetUIList()
-end)
+C.addBtn[1].MouseButton1Click:Connect(addSelectedAssets)
+C.clearBtn[1].MouseButton1Click:Connect(clearAssetList)
 
-C.builderSegmentSlot.MouseButton1Click:Connect(function()
-	builderSlotToAssign = "Segment"
-	updateAssetUIList()
-end)
-
-C.randomizeBtn.MouseButton1Click:Connect(randomizeSettings)
-C.addBtn.MouseButton1Click:Connect(addSelectedAssets)
-C.clearBtn.MouseButton1Click:Connect(clearAssetList)
-
--- Path Buttons
-C.applyPathBtn.MouseButton1Click:Connect(paintAlongPath)
-C.clearPathBtn.MouseButton1Click:Connect(clearPath)
-
-C.pathFollowPathBtn.MouseButton1Click:Connect(function()
-	pathFollowPath = not pathFollowPath
-	updateToggleButtonsUI()
-end)
-
-C.pathCloseLoopBtn.MouseButton1Click:Connect(function()
-	pathCloseLoop = not pathCloseLoop
-	updatePathPreview()
-	updateToggleButtonsUI()
-end)
-
-C.avoidOverlapBtn.MouseButton1Click:Connect(function()
-	avoidOverlap = not avoidOverlap
-	updateToggleButtonsUI()
-end)
-
-C.surfaceAngleBtn.MouseButton1Click:Connect(function()
-	if surfaceAngleMode == "Off" then
-		surfaceAngleMode = "Floor"
-	elseif surfaceAngleMode == "Floor" then
-		surfaceAngleMode = "Wall"
-	else -- Pasti "Wall"
-		surfaceAngleMode = "Off"
-	end
-	updateToggleButtonsUI()
-end)
-
-C.physicsModeBtn.MouseButton1Click:Connect(function()
-	physicsModeEnabled = not physicsModeEnabled
-	updateToggleButtonsUI()
-end)
-
-C.physicsSettleTimeBox.FocusLost:Connect(function(enterPressed)
-	local newValue = parseNumber(C.physicsSettleTimeBox.Text, 1.5)
-	if newValue < 0.1 then newValue = 0.1 end -- Waktu minimal
-	physicsSettleTime = newValue
-	C.physicsSettleTimeBox.Text = tostring(newValue)
-end)
-
-C.snapToGridBtn.MouseButton1Click:Connect(function()
-	snapToGridEnabled = not snapToGridEnabled
-	updateToggleButtonsUI()
-end)
-
-C.gridSizeBox.FocusLost:Connect(function(enterPressed)
-	local newValue = parseNumber(C.gridSizeBox.Text, 4)
-	if newValue <= 0 then newValue = 1 end -- Ukuran minimal
-	gridSize = newValue
-	C.gridSizeBox.Text = tostring(newValue)
-end)
-
-C.densityPreviewBtn.MouseButton1Click:Connect(function()
-	densityPreviewEnabled = not densityPreviewEnabled
-	updateToggleButtonsUI()
-end)
-
-C.autoTerrainPaintBtn.MouseButton1Click:Connect(function()
-	autoTerrainPaint = not autoTerrainPaint
-	updateToggleButtonsUI()
-end)
-
-C.undoTerrainPaintBtn.MouseButton1Click:Connect(function()
-	if #terrainUndoStack > 0 then
-		local lastAction = table.remove(terrainUndoStack)
-		workspace.Terrain:PasteRegion(lastAction.Data, lastAction.Region.Min, true)
-	else
-		warn("Brush Tool: Tidak ada perubahan medan untuk di-undo.")
-	end
-end)
-
-C.maskingModeBtn.MouseButton1Click:Connect(function()
-	if maskingMode == "Off" then
-		maskingMode = "Material"
-	elseif maskingMode == "Material" then
-		maskingMode = "Color"
-	elseif maskingMode == "Color" then
-		maskingMode = "Tag"
-	else -- Tag
-		maskingMode = "Off"
-	end
+C.maskingModeBtn[1].MouseButton1Click:Connect(function()
+	if maskingMode == "Off" then maskingMode = "Material"
+	elseif maskingMode == "Material" then maskingMode = "Color"
+	elseif maskingMode == "Color" then maskingMode = "Tag"
+	else maskingMode = "Off" end
 	maskingValue = nil
 	updateMaskingUI()
 end)
 
-C.pickMaskTargetBtn.MouseButton1Click:Connect(function()
-	local selection = Selection:Get()
-	if #selection > 0 and selection[1]:IsA("BasePart") then
-		local targetPart = selection[1]
-		if maskingMode == "Material" then
-			maskingValue = targetPart.Material
-		elseif maskingMode == "Color" then
-			maskingValue = targetPart.Color
+C.pickMaskTargetBtn[1].MouseButton1Click:Connect(function()
+	local sel = Selection:Get()
+	if #sel > 0 and sel[1]:IsA("BasePart") then
+		if maskingMode == "Material" then maskingValue = sel[1].Material
+		elseif maskingMode == "Color" then maskingValue = sel[1].Color
 		elseif maskingMode == "Tag" then
-			local tags = CollectionService:GetTags(targetPart)
-			if #tags > 0 then
-				maskingValue = tags[1]
-			else
-				maskingValue = nil
-			end
+			local t = CollectionService:GetTags(sel[1])
+			if #t > 0 then maskingValue = t[1] end
 		end
 		updateMaskingUI()
 	end
 end)
 
-local function parseColor(str)
-	local r, g, b = str:match("^(%d+),%s*(%d+),%s*(%d+)$")
-	if r and g and b then
-		local rNum, gNum, bNum = tonumber(r), tonumber(g), tonumber(b)
-		if rNum and gNum and bNum and rNum <= 255 and gNum <= 255 and bNum <= 255 then
-			return Color3.fromRGB(rNum, gNum, bNum)
-		end
-	end
-	return nil
-end
-
-C.maskingTextBox.FocusLost:Connect(function(enterPressed)
-	if not enterPressed then return end
-	local text = C.maskingTextBox.Text
-	if text == "" then
-		maskingValue = nil
-	elseif maskingMode == "Tag" then
-		maskingValue = text
-	elseif maskingMode == "Color" then
-		local color = parseColor(text)
-		if color then
-			maskingValue = color
-		else
-			warn("Brush Tool: Invalid color format. Please use R, G, B (e.g., 255, 128, 0).")
-		end
-	elseif maskingMode == "Material" then
-		local success, materialEnum = pcall(function() return Enum.Material[text] end)
-		if success and materialEnum then
-			maskingValue = materialEnum
-		else
-			warn("Brush Tool: Invalid material name: " .. text)
-		end
-	end
-	updateMaskingUI()
+C.cableColorButton[1].MouseButton1Click:Connect(function()
+	plugin:ShowColorPicker(cableColor, function(c) cableColor = c; C.cableColorButton[1].BackgroundColor3 = c end)
+end)
+C.cableMaterialButton[1].MouseButton1Click:Connect(function()
+	-- Simple toggle for demo
+	if cableMaterial == Enum.Material.Plastic then cableMaterial = Enum.Material.Neon
+	else cableMaterial = Enum.Material.Plastic end
+	C.cableMaterialButton[1].Text = "MAT: " .. cableMaterial.Name
 end)
 
-
--- Initialize Preview Folder at a global scope
-previewFolder = workspace:FindFirstChild("_BrushPreview")
-if previewFolder then
-	previewFolder:Destroy()
-end
-previewFolder = Instance.new("Folder")
-previewFolder.Name = "_BrushPreview"
-previewFolder.Parent = workspace
-
-
--- Initialize Density Preview Folder
-densityPreviewFolder = workspace:FindFirstChild("_DensityPreview")
-if densityPreviewFolder then
-	densityPreviewFolder:Destroy()
-end
-densityPreviewFolder = Instance.new("Folder")
-densityPreviewFolder.Name = "_DensityPreview"
-densityPreviewFolder.Parent = workspace
-
-
--- Initialize Curve Preview Folder
--- Initialize Path Preview Folder
-pathPreviewFolder = workspace:FindFirstChild("_PathPreview")
-if pathPreviewFolder then
-	pathPreviewFolder:Destroy()
-end
-pathPreviewFolder = Instance.new("Folder")
-pathPreviewFolder.Name = "_PathPreview"
-pathPreviewFolder.Parent = workspace
-
--- Initialize Cable Preview Folder
-cablePreviewFolder = workspace:FindFirstChild("_CablePreview")
-if cablePreviewFolder then
-	cablePreviewFolder:Destroy()
-end
-cablePreviewFolder = Instance.new("Folder")
-cablePreviewFolder.Name = "_CablePreview"
-cablePreviewFolder.Parent = workspace
-
--- Initialize Builder Preview Folder
-builderPreviewFolder = workspace:FindFirstChild("_BuilderPreview")
-if builderPreviewFolder then
-	builderPreviewFolder:Destroy()
-end
-builderPreviewFolder = Instance.new("Folder")
-builderPreviewFolder.Name = "_BuilderPreview"
-builderPreviewFolder.Parent = workspace
-
-C.fillBtn.MouseButton1Click:Connect(function()
-	if C.fillBtn.Active and partToFill then
-		fillArea(partToFill)
+-- Input Connections (Persistence)
+C.assetSettingsOffsetY[1].FocusLost:Connect(function()
+	if selectedAssetInUI then
+		assetOffsets[selectedAssetInUI] = parseNumber(C.assetSettingsOffsetY[1].Text, 0)
+		persistOffsets()
+	end
+end)
+C.assetSettingsWeight[1].FocusLost:Connect(function()
+	if selectedAssetInUI then
+		assetOffsets[selectedAssetInUI.."_weight"] = parseNumber(C.assetSettingsWeight[1].Text, 1)
+		persistOffsets()
+	end
+end)
+C.assetSettingsAlign[1].MouseButton1Click:Connect(function()
+	if selectedAssetInUI then
+		assetOffsets[selectedAssetInUI.."_align"] = not assetOffsets[selectedAssetInUI.."_align"]
+		persistOffsets()
+		updateAllToggles()
+	end
+end)
+C.assetSettingsActive[1].MouseButton1Click:Connect(function()
+	if selectedAssetInUI then
+		local key = selectedAssetInUI.."_active"
+		assetOffsets[key] = not (assetOffsets[key] ~= false)
+		persistOffsets()
+		updateAllToggles()
 	end
 end)
 
-print("Brush Tool plugin loaded.")
+-- Global Settings Toggles
+C.pathFollowPathBtn[1].MouseButton1Click:Connect(function() pathFollowPath = not pathFollowPath; updateAllToggles() end)
+C.pathCloseLoopBtn[1].MouseButton1Click:Connect(function() pathCloseLoop = not pathCloseLoop; updateAllToggles(); updatePathPreview() end)
+C.builderStretchToggle[1].MouseButton1Click:Connect(function() C.builderStretchToggle[1].Text = (C.builderStretchToggle[1].Text == "Stretch Segment") and "Don't Stretch" or "Stretch Segment"; updateAllToggles() end)
+
+C.physicsModeBtn[1].MouseButton1Click:Connect(function() physicsModeEnabled = not physicsModeEnabled; updateAllToggles() end)
+C.snapToGridBtn[1].MouseButton1Click:Connect(function() snapToGridEnabled = not snapToGridEnabled; updateAllToggles() end)
+C.densityPreviewBtn[1].MouseButton1Click:Connect(function() densityPreviewEnabled = not densityPreviewEnabled; updateAllToggles() end)
+C.avoidOverlapBtn[1].MouseButton1Click:Connect(function() avoidOverlap = not avoidOverlap; updateAllToggles() end)
+C.autoTerrainPaintBtn[1].MouseButton1Click:Connect(function() autoTerrainPaint = not autoTerrainPaint; updateAllToggles() end)
+C.surfaceAngleBtn[1].MouseButton1Click:Connect(function()
+	if surfaceAngleMode == "Off" then surfaceAngleMode = "Floor"
+	elseif surfaceAngleMode == "Floor" then surfaceAngleMode = "Wall"
+	else surfaceAngleMode = "Off" end
+	updateAllToggles()
+end)
+
+C.physicsSettleTimeBox[1].FocusLost:Connect(function() physicsSettleTime = parseNumber(C.physicsSettleTimeBox[1].Text, 1.5) end)
+C.gridSizeBox[1].FocusLost:Connect(function() gridSize = parseNumber(C.gridSizeBox[1].Text, 4) end)
+
+toolbarBtn.Click:Connect(function() widget.Enabled = not widget.Enabled end)
+
+-- Init
+loadOffsets()
+Selection.SelectionChanged:Connect(updateFillSelection)
+updateAssetUIList()
+updateModeButtonsUI()
+updateAllToggles()
+updateMaskingUI()
+
+-- Cleanup
+plugin.Unloading:Connect(function()
+	deactivate()
+	if previewFolder then previewFolder:Destroy() end
+	if densityPreviewFolder then densityPreviewFolder:Destroy() end
+	if pathPreviewFolder then pathPreviewFolder:Destroy() end
+	if cablePreviewFolder then cablePreviewFolder:Destroy() end
+	if builderPreviewFolder then builderPreviewFolder:Destroy() end
+end)
+
+-- Global Preview Folders
+previewFolder = workspace:FindFirstChild("_BrushPreview") or Instance.new("Folder", workspace); previewFolder.Name = "_BrushPreview"
+densityPreviewFolder = workspace:FindFirstChild("_DensityPreview") or Instance.new("Folder", workspace); densityPreviewFolder.Name = "_DensityPreview"
+pathPreviewFolder = workspace:FindFirstChild("_PathPreview") or Instance.new("Folder", workspace); pathPreviewFolder.Name = "_PathPreview"
+cablePreviewFolder = workspace:FindFirstChild("_CablePreview") or Instance.new("Folder", workspace); cablePreviewFolder.Name = "_CablePreview"
+builderPreviewFolder = workspace:FindFirstChild("_BuilderPreview") or Instance.new("Folder", workspace); builderPreviewFolder.Name = "_BuilderPreview"
+
+-- Print Status
+print("Brush Tool V8 // Cyber-Industrial UI Loaded.")
+print("System Status: ONLINE")
